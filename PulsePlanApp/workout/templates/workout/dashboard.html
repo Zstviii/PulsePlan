@@ -1,0 +1,248 @@
+{% extends "workout/base.html" %}
+{% block title %}Календарь и кабинет — PulsePlan{% endblock %}
+{% block content %}
+
+<!-- Верхняя сводка личного кабинета -->
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body">
+                <div class="text-muted small">Выбранная дата</div>
+                <div class="fs-4 fw-bold">{{ selected_date|date:"d.m.Y (l)" }}</div>
+                <div class="small text-secondary mt-1">
+                    Тренировок за день: <strong>{{ selected_day_workouts|length }}</strong>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body">
+                <div class="text-muted small">Расход калорий за {{ selected_date|date:"d.m.Y" }}</div>
+                <div class="fs-4 fw-bold text-danger">{{ selected_day_total_calories }} ккал</div>
+                <div class="small text-secondary mt-1">
+                    Всего за текущую неделю: <strong>{{ week_total_calories }} ккал</strong>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body">
+                <div class="text-muted small">Прогресс профиля ({{ user.username }})</div>
+                <div class="fs-4 fw-bold text-success">{{ total_completed_workouts }} выполнено</div>
+                <div class="small text-secondary mt-1">Завершённых тренировок за всё время</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Панель управления календарём -->
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-header bg-white d-flex flex-wrap justify-content-between align-items-center py-3">
+        <div class="d-flex align-items-center gap-2">
+            <a href="?date={{ prev_date|date:'Y-m-d' }}&mode={{ view_mode }}" class="btn btn-outline-secondary btn-sm">← Пред.</a>
+            <span class="fw-bold fs-5 mx-2">{{ selected_date|date:"F Y" }}</span>
+            <a href="?date={{ next_date|date:'Y-m-d' }}&mode={{ view_mode }}" class="btn btn-outline-secondary btn-sm">След. →</a>
+            <a href="?mode={{ view_mode }}" class="btn btn-link btn-sm text-decoration-none">Сегодня</a>
+        </div>
+        <div class="btn-group btn-group-sm">
+            <a href="?date={{ selected_date|date:'Y-m-d' }}&mode=week"
+               class="btn {% if view_mode == 'week' %}btn-primary{% else %}btn-outline-primary{% endif %}">Неделя</a>
+            <a href="?date={{ selected_date|date:'Y-m-d' }}&mode=month"
+               class="btn {% if view_mode == 'month' %}btn-primary{% else %}btn-outline-primary{% endif %}">Месяц</a>
+        </div>
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-bordered mb-0">
+            <thead class="table-light text-center small">
+                <tr>
+                    <th>Пн</th><th>Вт</th><th>Ср</th><th>Чт</th><th>Пт</th><th>Сб</th><th>Вс</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for week in calendar_weeks %}
+                <tr>
+                    {% for day in week %}
+                    <td class="cal-cell p-2 {% if day.is_selected %}cal-selected{% endif %} {% if day.is_today %}cal-today{% endif %} {% if not day.in_current_month and view_mode == 'month' %}text-muted bg-light{% endif %}">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <a href="?date={{ day.date|date:'Y-m-d' }}&mode={{ view_mode }}"
+                               class="fw-bold text-decoration-none {% if day.is_selected %}text-primary{% else %}text-dark{% endif %}">
+                                {{ day.date|date:"d.m" }}
+                            </a>
+                            {% if day.total_calories > 0 %}
+                                <span class="badge bg-danger-subtle text-danger border border-danger-subtle">
+                                    🔥 {{ day.total_calories }} ккал
+                                </span>
+                            {% endif %}
+                        </div>
+
+                        {% for w in day.workouts %}
+                            <div class="p-1 mb-1 rounded small {% if w.status == 'completed' %}bg-success-subtle text-success-emphasis{% else %}bg-primary-subtle text-primary-emphasis{% endif %}">
+                                <a href="?date={{ day.date|date:'Y-m-d' }}&mode={{ view_mode }}" class="text-decoration-none text-reset d-block">
+                                    <strong>{{ w.scheduled_at|date:"H:i" }}</strong> {{ w.title }}
+                                    {% if w.status == 'completed' %}✓{% endif %}
+                                </a>
+                            </div>
+                        {% empty %}
+                            <div class="text-muted small opacity-50">—</div>
+                        {% endfor %}
+                    </td>
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Детали выбранного дня: Тренировки + Учёт калорий -->
+<div class="row g-4">
+    <!-- Левая колонка: Тренировки и упражнения за выбранную дату -->
+    <div class="col-lg-7">
+        <div class="card border-0 shadow-sm mb-3">
+            <div class="card-header bg-white fw-bold py-3">
+                Тренировки на {{ selected_date|date:"d.m.Y" }}
+            </div>
+            <div class="card-body">
+                {% for workout in selected_day_workouts %}
+                    <div class="border rounded p-3 mb-3 bg-white">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <div>
+                                <span class="badge {% if workout.status == 'completed' %}bg-success{% else %}bg-warning text-dark{% endif %} me-1">
+                                    {{ workout.get_status_display }}
+                                </span>
+                                <strong class="fs-5">{{ workout.title }}</strong>
+                                <span class="text-muted small ms-2">🕒 {{ workout.scheduled_at|date:"H:i" }}</span>
+                                {% if workout.total_calories > 0 %}
+                                    <span class="badge bg-danger ms-1">{{ workout.total_calories }} ккал</span>
+                                {% endif %}
+                            </div>
+                            <form method="post" action="{% url 'workout_toggle_status' workout.id %}">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-sm {% if workout.status == 'completed' %}btn-outline-secondary{% else %}btn-success{% endif %}">
+                                    {% if workout.status == 'completed' %}Вернуть в план{% else %}✓ Отметить выполненной{% endif %}
+                                </button>
+                            </form>
+                        </div>
+
+                        {% if workout.notes %}
+                            <p class="small text-muted mb-2">{{ workout.notes }}</p>
+                        {% endif %}
+
+                        <!-- Список упражнений -->
+                        <ul class="list-group list-group-flush small mb-2">
+                            {% for ex in workout.exercises.all %}
+                                <li class="list-group-item px-0 d-flex justify-content-between">
+                                    <span>{{ forloop.counter }}. <strong>{{ ex.name }}</strong></span>
+                                    <span class="text-secondary">
+                                        {{ ex.sets }} подх. × {{ ex.reps }} повт.
+                                        ({% if ex.weight_kg > 0 %}{{ ex.weight_kg }} кг{% else %}свой вес{% endif %})
+                                    </span>
+                                </li>
+                            {% empty %}
+                                <li class="list-group-item px-0 text-muted">Упражнения пока не добавлены.</li>
+                            {% endfor %}
+                        </ul>
+
+                        <!-- Быстрое добавление упражнения -->
+                        <form method="post" action="{% url 'exercise_create' workout.id %}" class="row g-2 align-items-center mt-1">
+                            {% csrf_token %}
+                            <div class="col-sm-5">
+                                <input type="text" name="name" class="form-control form-control-sm" placeholder="Упражнение (напр. Присед)" required>
+                            </div>
+                            <div class="col-sm-2">
+                                <input type="number" name="sets" class="form-control form-control-sm" placeholder="Подх." value="3" min="1">
+                            </div>
+                            <div class="col-sm-2">
+                                <input type="number" name="reps" class="form-control form-control-sm" placeholder="Повт." value="12" min="1">
+                            </div>
+                            <div class="col-sm-2">
+                                <input type="number" step="0.5" name="weight_kg" class="form-control form-control-sm" placeholder="Вес кг" value="0">
+                            </div>
+                            <div class="col-sm-1 d-grid">
+                                <button type="submit" class="btn btn-outline-primary btn-sm">+</button>
+                            </div>
+                        </form>
+                    </div>
+                {% empty %}
+                    <p class="text-muted mb-0">На этот день тренировок пока не запланировано.</p>
+                {% endfor %}
+
+                <hr>
+                <h6 class="fw-bold mb-2">Запланировать тренировку на {{ selected_date|date:"d.m.Y" }}</h6>
+                <form method="post" action="{% url 'workout_create' %}" class="row g-2">
+                    {% csrf_token %}
+                    <input type="hidden" name="date" value="{{ selected_date|date:'Y-m-d' }}">
+                    <div class="col-sm-6">
+                        <input type="text" name="title" class="form-control form-control-sm" placeholder="Название (напр. Фулбоди для новичка)" required>
+                    </div>
+                    <div class="col-sm-3">
+                        <input type="time" name="time" class="form-control form-control-sm" value="18:30" required>
+                    </div>
+                    <div class="col-sm-3 d-grid">
+                        <button type="submit" class="btn btn-primary btn-sm">Добавить</button>
+                    </div>
+                    <div class="col-12">
+                        <input type="text" name="notes" class="form-control form-control-sm" placeholder="Заметка (опционально)">
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Правая колонка: Учёт калорий за выбранную дату -->
+    <div class="col-lg-5">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white fw-bold py-3 d-flex justify-content-between">
+                <span>Учёт калорий за {{ selected_date|date:"d.m.Y" }}</span>
+                <span class="text-danger">Итого: {{ selected_day_total_calories }} ккал</span>
+            </div>
+            <div class="card-body">
+                <ul class="list-group list-group-flush small mb-3">
+                    {% for log in selected_day_calorie_logs %}
+                        <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>{{ log.calories_burned }} ккал</strong>
+                                {% if log.workout %}
+                                    <span class="badge bg-primary-subtle text-primary ms-1">{{ log.workout.title }}</span>
+                                {% endif %}
+                                {% if log.activity_note %}
+                                    <div class="text-muted">{{ log.activity_note }}</div>
+                                {% endif %}
+                            </div>
+                        </li>
+                    {% empty %}
+                        <li class="list-group-item px-0 text-muted">Записей о расходе калорий за этот день нет.</li>
+                    {% endfor %}
+                </ul>
+
+                <h6 class="fw-bold mb-2">Добавить расход калорий</h6>
+                <form method="post" action="{% url 'calorie_create' %}" class="row g-2">
+                    {% csrf_token %}
+                    <input type="hidden" name="date" value="{{ selected_date|date:'Y-m-d' }}">
+                    <div class="col-sm-5">
+                        <input type="number" name="calories_burned" class="form-control form-control-sm" placeholder="Ккал (напр. 300)" min="1" required>
+                    </div>
+                    <div class="col-sm-7">
+                        <select name="workout_id" class="form-select form-select-sm">
+                            <option value="">— Общая активность за день —</option>
+                            {% for w in user_workouts_for_select %}
+                                <option value="{{ w.id }}">Тренировка: {{ w.title }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-12">
+                        <input type="text" name="activity_note" class="form-control form-control-sm" placeholder="Комментарий (напр. Прогулка 8000 шагов или Кардио)">
+                    </div>
+                    <div class="col-12 d-grid">
+                        <button type="submit" class="btn btn-danger btn-sm">Записать калории</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
