@@ -22,6 +22,9 @@ def _parse_selected_date(raw_date: str | None) -> date:
             pass
     return timezone.localdate()
 
+def _get_user_workout(user, workout_id: int) -> Workout:
+   """Возвращает тренировку только если она принадлежит текущему пользователю, иначе 404."""
+   return get_object_or_404(Workout, id=workout_id, user=user)
 
 def register_view(request):
     """Регистрация нового пользователя с автоматическим входом."""
@@ -194,82 +197,81 @@ def workout_create_view(request):
 @login_required
 @require_POST
 def workout_toggle_status_view(request, workout_id: int):
-    """Быстрое переключение статуса тренировки (Запланирована ↔ Выполнена)."""
-    workout = get_object_or_404(Workout, id=workout_id, user=request.user)
-    new_status = request.POST.get("status")
+   """Быстрое переключение статуса тренировки (Запланирована ↔ Выполнена)."""
+   workout = _get_user_workout(request.user, workout_id)
+   new_status = request.POST.get("status")
 
-    if new_status in dict(Workout.Status.choices):
-        workout.status = new_status
-    else:
-        workout.status = (
-            Workout.Status.COMPLETED
-            if workout.status != Workout.Status.COMPLETED
-            else Workout.Status.PLANNED
-        )
-    workout.save(update_fields=["status"])
+   if new_status in dict(Workout.Status.choices):
+       workout.status = new_status
+   else:
+       workout.status = (
+           Workout.Status.COMPLETED
+           if workout.status != Workout.Status.COMPLETED
+           else Workout.Status.PLANNED
+       )
+   workout.save(update_fields=["status"])
 
-    w_date = timezone.localtime(workout.scheduled_at).date()
-    return redirect(f"/?date={w_date.isoformat()}")
+   w_date = timezone.localtime(workout.scheduled_at).date()
+   return redirect(f"/?date={w_date.isoformat()}")
 
 
 @login_required
 @require_POST
 def exercise_create_view(request, workout_id: int):
-    """Добавление упражнения (подходы, повторения, вес) к тренировке."""
-    workout = get_object_or_404(Workout, id=workout_id, user=request.user)
-    name = request.POST.get("name", "").strip()
-    sets = int(request.POST.get("sets") or 3)
-    reps = int(request.POST.get("reps") or 10)
-    weight_raw = request.POST.get("weight_kg") or "0"
+   """Добавление упражнения (подходы, повторения, вес) к тренировке."""
+   workout = _get_user_workout(request.user, workout_id)
+   name = request.POST.get("name", "").strip()
+   sets = int(request.POST.get("sets") or 3)
+   reps = int(request.POST.get("reps") or 10)
+   weight_raw = request.POST.get("weight_kg") or "0"
 
-    if name:
-        next_order = workout.exercises.count() + 1
-        Exercise.objects.create(
-            workout=workout,
-            name=name,
-            sets=max(1, sets),
-            reps=max(1, reps),
-            weight_kg=max(0.0, float(weight_raw)),
-            order=next_order,
-        )
-        messages.success(request, f"Упражнение «{name}» добавлено.")
+   if name:
+       next_order = workout.exercises.count() + 1
+       Exercise.objects.create(
+           workout=workout,
+           name=name,
+           sets=max(1, sets),
+           reps=max(1, reps),
+           weight_kg=max(0.0, float(weight_raw)),
+           order=next_order,
+       )
+       messages.success(request, f"Упражнение «{name}» добавлено.")
 
-    w_date = timezone.localtime(workout.scheduled_at).date()
-    return redirect(f"/?date={w_date.isoformat()}")
+   w_date = timezone.localtime(workout.scheduled_at).date()
+   return redirect(f"/?date={w_date.isoformat()}")
+
 
 
 @login_required
 @require_POST
 def calorie_create_view(request):
-    """Добавление записи о потраченных калориях (к тренировке или за день)."""
-    target_date = _parse_selected_date(request.POST.get("date"))
-    calories_raw = request.POST.get("calories_burned", "0")
-    workout_id = request.POST.get("workout_id")
-    activity_note = request.POST.get("activity_note", "").strip()
+   """Добавление записи о потраченных калориях (к тренировке или за день)."""
+   target_date = _parse_selected_date(request.POST.get("date"))
+   calories_raw = request.POST.get("calories_burned", "0")
+   workout_id = request.POST.get("workout_id")
+   activity_note = request.POST.get("activity_note", "").strip()
 
-    try:
-        calories_burned = int(calories_raw)
-    except ValueError:
-        calories_burned = 0
+   try:
+       calories_burned = int(calories_raw)
+   except ValueError:
+       calories_burned = 0
 
-    if calories_burned <= 0:
-        messages.error(request, "Количество калорий должно быть положительным числом.")
-        return redirect(f"/?date={target_date.isoformat()}")
+   if calories_burned <= 0:
+       messages.error(request, "Количество калорий должно быть положительным числом.")
+       return redirect(f"/?date={target_date.isoformat()}")
 
-    linked_workout = None
-    if workout_id:
-        linked_workout = Workout.objects.filter(
-            id=workout_id, user=request.user
-        ).first()
-        if linked_workout:
-            target_date = timezone.localtime(linked_workout.scheduled_at).date()
+   linked_workout = None
+   if workout_id:
+       linked_workout = _get_user_workout(request.user, workout_id)
+       target_date = timezone.localtime(linked_workout.scheduled_at).date()
 
-    DailyCalories.objects.create(
-        user=request.user,
-        workout=linked_workout,
-        date=target_date,
-        calories_burned=calories_burned,
-        activity_note=activity_note,
-    )
-    messages.success(request, f"Учтено {calories_burned} ккал за {target_date:%d.%m.%Y}.")
-    return redirect(f"/?date={target_date.isoformat()}")
+   DailyCalories.objects.create(
+       user=request.user,
+       workout=linked_workout,
+       date=target_date,
+       calories_burned=calories_burned,
+       activity_note=activity_note,
+   )
+   messages.success(request, f"Учтено {calories_burned} ккал за {target_date:%d.%m.%Y}.")
+   return redirect(f"/?date={target_date.isoformat()}")
+
