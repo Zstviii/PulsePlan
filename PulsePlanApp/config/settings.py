@@ -10,22 +10,40 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
+import os
 from pathlib import Path
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
+def _load_dotenv(env_path: Path) -> None:
+    """Подгружает переменные из .env в os.environ, если файл существует."""
+    if not env_path.exists():
+        return
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-4)#fjgourri65r3%(kyeu$x84#b%@c9*!l54+2kpoa(=m^lf9k'
+
+_load_dotenv(BASE_DIR / ".env")
+
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY")
+if not SECRET_KEY:
+    raise ImproperlyConfigured(
+        "Не задана переменная окружения DJANGO_SECRET_KEY. "
+        "Создайте файл .env в корне PulsePlanApp или экспортируйте переменную."
+    )
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
 ALLOWED_HOSTS = []
+
 
 
 # Application definition

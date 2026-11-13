@@ -108,11 +108,21 @@ class DailyCalories(models.Model):
         verbose_name_plural = "Записи калорий"
         ordering = ["-date", "-created_at"]
 
+    def clean(self):
+        super().clean()
+        if self.workout_id and self.user_id and self.workout.user_id != self.user_id:
+            from django.core.exceptions import ValidationError
+            raise ValidationError(
+                {"workout": "Нельзя привязать калории к тренировке другого пользователя."}
+            )
+
     def save(self, *args, **kwargs):
+        self.full_clean()
         # Если запись привязана к тренировке, синхронизируем дату с датой тренировки
         if self.workout and not self.date:
             self.date = timezone.localtime(self.workout.scheduled_at).date()
         super().save(*args, **kwargs)
+
 
     def __str__(self) -> str:
         source = self.workout.title if self.workout else (self.activity_note or "Дневная активность")
