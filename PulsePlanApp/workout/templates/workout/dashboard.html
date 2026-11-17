@@ -2,7 +2,6 @@
 {% block title %}Календарь и кабинет — PulsePlan{% endblock %}
 {% block content %}
 
-<!-- Верхняя сводка личного кабинета -->
 <div class="row g-3 mb-4">
     <div class="col-md-4">
         <div class="card border-0 shadow-sm h-100">
@@ -37,7 +36,6 @@
     </div>
 </div>
 
-<!-- Панель управления календарём -->
 <div class="card border-0 shadow-sm mb-4">
     <div class="card-header bg-white d-flex flex-wrap justify-content-between align-items-center py-3">
         <div class="d-flex align-items-center gap-2">
@@ -79,10 +77,10 @@
                         </div>
 
                         {% for w in day.workouts %}
-                            <div class="p-1 mb-1 rounded small {% if w.status == 'completed' %}bg-success-subtle text-success-emphasis{% else %}bg-primary-subtle text-primary-emphasis{% endif %}">
+                            <div class="p-1 mb-1 rounded small {% if w.status == 'completed' %}bg-success-subtle text-success-emphasis{% elif w.status == 'skipped' %}bg-secondary-subtle text-secondary-emphasis text-decoration-line-through{% else %}bg-primary-subtle text-primary-emphasis{% endif %}">
                                 <a href="?date={{ day.date|date:'Y-m-d' }}&mode={{ view_mode }}" class="text-decoration-none text-reset d-block">
                                     <strong>{{ w.scheduled_at|date:"H:i" }}</strong> {{ w.title }}
-                                    {% if w.status == 'completed' %}✓{% endif %}
+                                    {% if w.status == 'completed' %}✓{% elif w.status == 'skipped' %}✕{% endif %}
                                 </a>
                             </div>
                         {% empty %}
@@ -96,10 +94,7 @@
         </table>
     </div>
 </div>
-
-<!-- Детали выбранного дня: Тренировки + Учёт калорий -->
 <div class="row g-4">
-    <!-- Левая колонка: Тренировки и упражнения за выбранную дату -->
     <div class="col-lg-7">
         <div class="card border-0 shadow-sm mb-3">
             <div class="card-header bg-white fw-bold py-3">
@@ -108,9 +103,9 @@
             <div class="card-body">
                 {% for workout in selected_day_workouts %}
                     <div class="border rounded p-3 mb-3 bg-white">
-                        <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
                             <div>
-                                <span class="badge {% if workout.status == 'completed' %}bg-success{% else %}bg-warning text-dark{% endif %} me-1">
+                                <span class="badge {% if workout.status == 'completed' %}bg-success{% elif workout.status == 'skipped' %}bg-secondary{% else %}bg-warning text-dark{% endif %} me-1">
                                     {{ workout.get_status_display }}
                                 </span>
                                 <strong class="fs-5">{{ workout.title }}</strong>
@@ -119,11 +114,50 @@
                                     <span class="badge bg-danger ms-1">{{ workout.total_calories }} ккал</span>
                                 {% endif %}
                             </div>
-                            <form method="post" action="{% url 'workout_toggle_status' workout.id %}">
+
+                            <div class="d-flex flex-wrap align-items-center gap-1">
+                                <form method="post" action="{% url 'workout_toggle_status' workout.id %}" class="btn-group btn-group-sm">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="mode" value="{{ view_mode }}">
+                                    <button type="submit" name="status" value="planned"
+                                            class="btn {% if workout.status == 'planned' %}btn-warning{% else %}btn-outline-secondary{% endif %}">План</button>
+                                    <button type="submit" name="status" value="completed"
+                                            class="btn {% if workout.status == 'completed' %}btn-success{% else %}btn-outline-success{% endif %}">✓</button>
+                                    <button type="submit" name="status" value="skipped"
+                                            class="btn {% if workout.status == 'skipped' %}btn-secondary{% else %}btn-outline-secondary{% endif %}">Пропуск</button>
+                                </form>
+
+                                <button type="button" class="btn btn-outline-primary btn-sm"
+                                        data-bs-toggle="collapse" data-bs-target="#edit-workout-{{ workout.id }}">✏️</button>
+
+                                <form method="post" action="{% url 'workout_delete' workout.id %}"
+                                      onsubmit="return confirm('Удалить тренировку «{{ workout.title|escapejs }}»?');">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="mode" value="{{ view_mode }}">
+                                    <button type="submit" class="btn btn-outline-danger btn-sm">🗑️</button>
+                                </form>
+                            </div>
+                        </div>
+
+                        <div class="collapse mb-3" id="edit-workout-{{ workout.id }}">
+                            <form method="post" action="{% url 'workout_update' workout.id %}" class="p-2 bg-light rounded border row g-2">
                                 {% csrf_token %}
-                                <button type="submit" class="btn btn-sm {% if workout.status == 'completed' %}btn-outline-secondary{% else %}btn-success{% endif %}">
-                                    {% if workout.status == 'completed' %}Вернуть в план{% else %}✓ Отметить выполненной{% endif %}
-                                </button>
+                                <input type="hidden" name="mode" value="{{ view_mode }}">
+                                <div class="col-sm-5">
+                                    <input type="text" name="title" class="form-control form-control-sm" value="{{ workout.title }}" required>
+                                </div>
+                                <div class="col-sm-4">
+                                    <input type="date" name="date" class="form-control form-control-sm" value="{{ workout.scheduled_at|date:'Y-m-d' }}" required>
+                                </div>
+                                <div class="col-sm-3">
+                                    <input type="time" name="time" class="form-control form-control-sm" value="{{ workout.scheduled_at|date:'H:i' }}" required>
+                                </div>
+                                <div class="col-sm-9">
+                                    <input type="text" name="notes" class="form-control form-control-sm" value="{{ workout.notes }}" placeholder="Заметка">
+                                </div>
+                                <div class="col-sm-3 d-grid">
+                                    <button type="submit" class="btn btn-primary btn-sm">Сохранить</button>
+                                </div>
                             </form>
                         </div>
 
@@ -131,24 +165,30 @@
                             <p class="small text-muted mb-2">{{ workout.notes }}</p>
                         {% endif %}
 
-                        <!-- Список упражнений -->
                         <ul class="list-group list-group-flush small mb-2">
                             {% for ex in workout.exercises.all %}
-                                <li class="list-group-item px-0 d-flex justify-content-between">
+                                <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
                                     <span>{{ forloop.counter }}. <strong>{{ ex.name }}</strong></span>
-                                    <span class="text-secondary">
-                                        {{ ex.sets }} подх. × {{ ex.reps }} повт.
-                                        ({% if ex.weight_kg > 0 %}{{ ex.weight_kg }} кг{% else %}свой вес{% endif %})
-                                    </span>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="text-secondary">
+                                            {{ ex.sets }} подх. × {{ ex.reps }} повт.
+                                            ({% if ex.weight_kg > 0 %}{{ ex.weight_kg }} кг{% else %}свой вес{% endif %})
+                                        </span>
+                                        <form method="post" action="{% url 'exercise_delete' ex.id %}" class="m-0">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="mode" value="{{ view_mode }}">
+                                            <button type="submit" class="btn btn-link text-danger p-0 text-decoration-none fw-bold">×</button>
+                                        </form>
+                                    </div>
                                 </li>
                             {% empty %}
                                 <li class="list-group-item px-0 text-muted">Упражнения пока не добавлены.</li>
                             {% endfor %}
                         </ul>
 
-                        <!-- Быстрое добавление упражнения -->
                         <form method="post" action="{% url 'exercise_create' workout.id %}" class="row g-2 align-items-center mt-1">
                             {% csrf_token %}
+                            <input type="hidden" name="mode" value="{{ view_mode }}">
                             <div class="col-sm-5">
                                 <input type="text" name="name" class="form-control form-control-sm" placeholder="Упражнение (напр. Присед)" required>
                             </div>
@@ -159,7 +199,7 @@
                                 <input type="number" name="reps" class="form-control form-control-sm" placeholder="Повт." value="12" min="1">
                             </div>
                             <div class="col-sm-2">
-                                <input type="number" step="0.5" name="weight_kg" class="form-control form-control-sm" placeholder="Вес кг" value="0">
+                                <input type="number" step="0.5" name="weight_kg" class="form-control form-control-sm" placeholder="Вес кг" value="0" min="0">
                             </div>
                             <div class="col-sm-1 d-grid">
                                 <button type="submit" class="btn btn-outline-primary btn-sm">+</button>
@@ -175,8 +215,9 @@
                 <form method="post" action="{% url 'workout_create' %}" class="row g-2">
                     {% csrf_token %}
                     <input type="hidden" name="date" value="{{ selected_date|date:'Y-m-d' }}">
+                    <input type="hidden" name="mode" value="{{ view_mode }}">
                     <div class="col-sm-6">
-                        <input type="text" name="title" class="form-control form-control-sm" placeholder="Название (напр. Фулбоди для новичка)" required>
+                        <input type="text" name="title" class="form-control form-control-sm" placeholder="Название (напр. Фулбоди)" required>
                     </div>
                     <div class="col-sm-3">
                         <input type="time" name="time" class="form-control form-control-sm" value="18:30" required>
@@ -191,8 +232,6 @@
             </div>
         </div>
     </div>
-
-    <!-- Правая колонка: Учёт калорий за выбранную дату -->
     <div class="col-lg-5">
         <div class="card border-0 shadow-sm">
             <div class="card-header bg-white fw-bold py-3 d-flex justify-content-between">
@@ -212,6 +251,11 @@
                                     <div class="text-muted">{{ log.activity_note }}</div>
                                 {% endif %}
                             </div>
+                            <form method="post" action="{% url 'calorie_delete' log.id %}" class="m-0">
+                                {% csrf_token %}
+                                <input type="hidden" name="mode" value="{{ view_mode }}">
+                                <button type="submit" class="btn btn-link text-danger p-0 text-decoration-none fw-bold">×</button>
+                            </form>
                         </li>
                     {% empty %}
                         <li class="list-group-item px-0 text-muted">Записей о расходе калорий за этот день нет.</li>
@@ -222,6 +266,7 @@
                 <form method="post" action="{% url 'calorie_create' %}" class="row g-2">
                     {% csrf_token %}
                     <input type="hidden" name="date" value="{{ selected_date|date:'Y-m-d' }}">
+                    <input type="hidden" name="mode" value="{{ view_mode }}">
                     <div class="col-sm-5">
                         <input type="number" name="calories_burned" class="form-control form-control-sm" placeholder="Ккал (напр. 300)" min="1" required>
                     </div>
@@ -234,7 +279,7 @@
                         </select>
                     </div>
                     <div class="col-12">
-                        <input type="text" name="activity_note" class="form-control form-control-sm" placeholder="Комментарий (напр. Прогулка 8000 шагов или Кардио)">
+                        <input type="text" name="activity_note" class="form-control form-control-sm" placeholder="Комментарий (напр. Прогулка 8000 шагов)">
                     </div>
                     <div class="col-12 d-grid">
                         <button type="submit" class="btn btn-danger btn-sm">Записать калории</button>

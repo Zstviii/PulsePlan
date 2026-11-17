@@ -1,4 +1,7 @@
+from decimal import Decimal
 from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.db.models import Sum
 from django.utils import timezone
@@ -55,13 +58,22 @@ class Exercise(models.Model):
         verbose_name="Тренировка",
     )
     name = models.CharField("Название упражнения", max_length=120)
-    sets = models.PositiveSmallIntegerField("Подходы", default=3)
-    reps = models.PositiveSmallIntegerField("Повторения", default=10)
+    sets = models.PositiveSmallIntegerField(
+        "Подходы",
+        default=3,
+        validators=[MinValueValidator(1), MaxValueValidator(100)],
+    )
+    reps = models.PositiveSmallIntegerField(
+        "Повторения",
+        default=10,
+        validators=[MinValueValidator(1), MaxValueValidator(1000)],
+    )
     weight_kg = models.DecimalField(
         "Вес (кг)",
         max_digits=5,
         decimal_places=1,
-        default=0.0,
+        default=Decimal("0.0"),
+        validators=[MinValueValidator(Decimal("0.0")), MaxValueValidator(Decimal("999.9"))],
         help_text="Укажите 0, если упражнение выполняется с собственным весом",
     )
     order = models.PositiveSmallIntegerField("Порядок", default=1)
@@ -94,7 +106,10 @@ class DailyCalories(models.Model):
         verbose_name="Связанная тренировка",
     )
     date = models.DateField("Дата учёта", default=timezone.localdate, db_index=True)
-    calories_burned = models.PositiveIntegerField("Потрачено ккал")
+    calories_burned = models.PositiveIntegerField(
+        "Потрачено ккал",
+        validators=[MinValueValidator(1), MaxValueValidator(20000)],
+    )
     activity_note = models.CharField(
         "Описание активности",
         max_length=150,
@@ -111,18 +126,15 @@ class DailyCalories(models.Model):
     def clean(self):
         super().clean()
         if self.workout_id and self.user_id and self.workout.user_id != self.user_id:
-            from django.core.exceptions import ValidationError
             raise ValidationError(
                 {"workout": "Нельзя привязать калории к тренировке другого пользователя."}
             )
 
     def save(self, *args, **kwargs):
-        self.full_clean()
-        # Если запись привязана к тренировке, синхронизируем дату с датой тренировки
-        if self.workout and not self.date:
+        if self.workout_id:
             self.date = timezone.localtime(self.workout.scheduled_at).date()
+        self.full_clean()
         super().save(*args, **kwargs)
-
 
     def __str__(self) -> str:
         source = self.workout.title if self.workout else (self.activity_note or "Дневная активность")
