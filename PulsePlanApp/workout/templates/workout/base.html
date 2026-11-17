@@ -11,15 +11,45 @@
         .cal-cell:hover { background-color: #f1f5f9; }
         .cal-selected { outline: 2px solid #2563eb; background-color: #eff6ff !important; }
         .cal-today { border-top: 3px solid #16a34a !important; }
+        .calendar-table { table-layout: fixed; width: 100%; }
+        .cal-day-count { display: none; }
+        @media (max-width: 575.98px) {
+            .calendar-table th { padding: .35rem .1rem; }
+            .cal-cell { min-height: 3.5rem; padding: .25rem !important; }
+            .cal-cell .cal-workout-item,
+            .cal-cell .cal-calories { display: none !important; }
+            .cal-cell .cal-day-count { display: block; }
+            .cal-cell .cal-day-link {
+                display: flex;
+                min-height: 2.75rem;
+                align-items: center;
+                justify-content: center;
+                font-size: .75rem;
+            }
+            .calendar-navigation,
+            .calendar-modes { justify-content: center; }
+            .exercise-row { flex-wrap: wrap; }
+            .exercise-details { overflow-wrap: anywhere; }
+            .btn-sm,
+            .btn-link { min-width: 2.75rem; min-height: 2.75rem; }
+            .form-control-sm,
+            .form-select-sm { min-height: 2.75rem; }
+        }
     </style>
 </head>
 <body>
 <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
     <div class="container">
         <a class="navbar-brand fw-bold" href="{% url 'dashboard' %}">⚡ PulsePlan - тренируйся!</a>
-        <div class="d-flex align-items-center gap-3">
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse"
+                data-bs-target="#pulseplanNavbar" aria-controls="pulseplanNavbar"
+                aria-expanded="false" aria-label="Открыть меню">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="pulseplanNavbar">
+            <div class="navbar-nav ms-auto d-flex flex-lg-row align-items-lg-center gap-2">
             {% if user.is_authenticated %}
-                <span class="text-light small">Профиль: <strong>{{ user.username }}</strong></span>
+                <span class="navbar-text text-light small">Профиль: <strong>{{ user.username }}</strong></span>
                 <form method="post" action="{% url 'logout' %}" class="m-0">
                     {% csrf_token %}
                     <button type="submit" class="btn btn-outline-light btn-sm">Выйти</button>
@@ -28,6 +58,7 @@
                 <a href="{% url 'login' %}" class="btn btn-outline-light btn-sm">Войти</a>
                 <a href="{% url 'register' %}" class="btn btn-primary btn-sm">Регистрация</a>
             {% endif %}
+            </div>
         </div>
     </div>
 </nav>
