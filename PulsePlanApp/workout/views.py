@@ -1,12 +1,14 @@
 import calendar
 from datetime import date, timedelta
+from time import sleep
 from urllib.parse import urlencode
 
 from django.contrib import messages
 from django.contrib.auth import login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
-from django.db.models import Sum
+from django.db import OperationalError, connection, transaction
+from django.db.models import Q, Sum
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -139,7 +141,7 @@ def dashboard_view(request):
         DailyCalories.objects.filter(
             user=request.user,
             date__range=(range_start, range_end),
-        )
+        ).filter(Q(workout__isnull=True) | Q(workout__status=Workout.Status.COMPLETED))
         .values("date")
         .annotate(day_total=Sum("calories_burned"))
     )
@@ -165,6 +167,8 @@ def dashboard_view(request):
     selected_day_workouts = workouts_by_day.get(selected_date, [])
     selected_day_calorie_logs = DailyCalories.objects.filter(
         user=request.user, date=selected_date
+    ).filter(
+        Q(workout__isnull=True) | Q(workout__status=Workout.Status.COMPLETED)
     ).select_related("workout")
     selected_day_total_calories = (
         selected_day_calorie_logs.aggregate(total=Sum("calories_burned"))["total"] or 0
@@ -190,7 +194,9 @@ def dashboard_view(request):
         "week_total_calories": week_total_calories,
         "workout_statuses": Workout.Status.choices,
         "user_workouts_for_select": Workout.objects.filter(
-            user=request.user, scheduled_at__date=selected_date
+            user=request.user,
+            scheduled_at__date=selected_date,
+            status=Workout.Status.COMPLETED,
         ),
     }
     return render(request, "workout/dashboard.html", context)
@@ -215,19 +221,22 @@ def workout_create_view(request):
 @login_required
 @require_POST
 def workout_update_view(request, workout_id: int):
-    """Редактирование существующей тренировки (название, дата/время, статус, заметки)."""
-    workout = _get_user_workout(request.user, workout_id)
-    current_date = timezone.localtime(workout.scheduled_at).date()
+    """Редактирование названия, даты, времени и заметок тренировки."""
     view_mode = request.POST.get("mode")
 
-    form = WorkoutForm(request.POST, instance=workout)
-    if form.is_valid():
-        updated = form.save()
-        new_date = timezone.localtime(updated.scheduled_at).date()
-        if new_date != current_date:
-            updated.calorie_entries.update(date=new_date)
-        messages.success(request, f"Тренировка «{updated.title}» обновлена.")
-        return _dashboard_redirect(new_date, view_mode)
+    with transaction.atomic():
+        workout = get_object_or_404(
+            Workout.objects.select_for_update(), id=workout_id, user=request.user
+        )
+        current_date = timezone.localtime(workout.scheduled_at).date()
+        form = WorkoutForm(request.POST, instance=workout)
+        if form.is_valid():
+            updated = form.save()
+            new_date = timezone.localtime(updated.scheduled_at).date()
+            if new_date != current_date:
+                updated.calorie_entries.update(date=new_date)
+            messages.success(request, f"Тренировка «{updated.title}» обновлена.")
+            return _dashboard_redirect(new_date, view_mode)
 
     _flash_form_errors(request, form)
     return _dashboard_redirect(current_date, view_mode)
@@ -237,11 +246,15 @@ def workout_update_view(request, workout_id: int):
 @require_POST
 def workout_delete_view(request, workout_id: int):
     """Удаление тренировки текущего пользователя."""
-    workout = _get_user_workout(request.user, workout_id)
-    w_date = timezone.localtime(workout.scheduled_at).date()
     view_mode = request.POST.get("mode")
-    title = workout.title
-    workout.delete()
+    with transaction.atomic():
+        workout = get_object_or_404(
+            Workout.objects.select_for_update(), id=workout_id, user=request.user
+        )
+        w_date = timezone.localtime(workout.scheduled_at).date()
+        title = workout.title
+        workout.calorie_entries.all().delete()
+        workout.delete()
     messages.success(request, f"Тренировка «{title}» удалена.")
     return _dashboard_redirect(w_date, view_mode)
 
@@ -249,26 +262,31 @@ def workout_delete_view(request, workout_id: int):
 @login_required
 @require_POST
 def workout_toggle_status_view(request, workout_id: int):
-    """Изменение статуса тренировки (поддержка всех 3 статусов или быстрый toggle)."""
-    workout = _get_user_workout(request.user, workout_id)
+    """Изменение статуса тренировки с проверкой допустимого перехода."""
     new_status = request.POST.get("status")
     view_mode = request.POST.get("mode")
-
-    if new_status in dict(Workout.Status.choices):
-        workout.status = new_status
-    elif new_status is None:
-        workout.status = (
-            Workout.Status.COMPLETED
-            if workout.status != Workout.Status.COMPLETED
-            else Workout.Status.PLANNED
+    with transaction.atomic():
+        workout = get_object_or_404(
+            Workout.objects.select_for_update(), id=workout_id, user=request.user
         )
-    else:
-        messages.error(request, "Указан некорректный статус тренировки.")
+        if new_status is None:
+            new_status = (
+                Workout.Status.PLANNED
+                if workout.status == Workout.Status.COMPLETED
+                else Workout.Status.COMPLETED
+            )
+        if new_status not in dict(Workout.Status.choices):
+            messages.error(request, "Указан некорректный статус тренировки.")
+            w_date = timezone.localtime(workout.scheduled_at).date()
+            return _dashboard_redirect(w_date, view_mode)
+        if not Workout.can_transition(workout.status, new_status):
+            messages.error(request, "Такой переход статуса тренировки недопустим.")
+            w_date = timezone.localtime(workout.scheduled_at).date()
+            return _dashboard_redirect(w_date, view_mode)
+        if workout.status != new_status:
+            workout.status = new_status
+            workout.save(update_fields=["status"])
         w_date = timezone.localtime(workout.scheduled_at).date()
-        return _dashboard_redirect(w_date, view_mode)
-
-    workout.save(update_fields=["status"])
-    w_date = timezone.localtime(workout.scheduled_at).date()
     return _dashboard_redirect(w_date, view_mode)
 
 
@@ -291,6 +309,27 @@ def exercise_create_view(request, workout_id: int):
         _flash_form_errors(request, form)
 
     return _dashboard_redirect(w_date, view_mode)
+
+
+@login_required
+@require_POST
+def exercise_update_view(request, exercise_id: int):
+    """Редактирование упражнения, принадлежащего текущему пользователю."""
+    with transaction.atomic():
+        exercise = get_object_or_404(
+            Exercise.objects.select_related("workout"),
+            id=exercise_id,
+            workout__user=request.user,
+        )
+        w_date = timezone.localtime(exercise.workout.scheduled_at).date()
+        form = ExerciseForm(request.POST, instance=exercise)
+        if form.is_valid():
+            updated = form.save()
+            messages.success(request, f"Упражнение «{updated.name}» обновлено.")
+            return _dashboard_redirect(w_date, request.POST.get("mode"))
+
+    _flash_form_errors(request, form)
+    return _dashboard_redirect(w_date, request.POST.get("mode"))
 
 
 @login_required
@@ -319,18 +358,63 @@ def calorie_create_view(request):
         return _dashboard_redirect(fallback_date, view_mode)
 
     workout_id = form.cleaned_data.get("workout_id")
-    linked_workout = None
     target_date = form.cleaned_data.get("date") or fallback_date
 
     if workout_id:
-        linked_workout = _get_user_workout(request.user, workout_id)
-        target_date = timezone.localtime(linked_workout.scheduled_at).date()
+        # SQLite has no row-level SELECT FOR UPDATE locks; retry its write contention.
+        for attempt in range(5):
+            try:
+                with transaction.atomic():
+                    linked_workout = get_object_or_404(
+                        Workout.objects.select_for_update(),
+                        id=workout_id,
+                        user=request.user,
+                    )
+                    target_date = timezone.localtime(linked_workout.scheduled_at).date()
+                    if linked_workout.status != Workout.Status.COMPLETED:
+                        messages.error(
+                            request,
+                            "Калории можно записать только для завершённой тренировки.",
+                        )
+                        return _dashboard_redirect(target_date, view_mode)
 
-    entry = form.save(commit=False)
-    entry.user = request.user
-    entry.workout = linked_workout
-    entry.date = target_date
-    entry.save()
+                    existing_entries = list(
+                        DailyCalories.objects.filter(workout=linked_workout).order_by("pk")[:2]
+                    )
+                    if len(existing_entries) > 1:
+                        messages.error(
+                            request,
+                            "Для тренировки уже есть несколько записей калорий. "
+                            "Удалите лишние записи перед обновлением.",
+                        )
+                        return _dashboard_redirect(target_date, view_mode)
+
+                    if existing_entries:
+                        entry = existing_entries[0]
+                        entry.calories_burned = form.cleaned_data["calories_burned"]
+                        entry.activity_note = form.cleaned_data["activity_note"]
+                        entry.date = target_date
+                    else:
+                        entry = form.save(commit=False)
+                        entry.user = request.user
+                        entry.workout = linked_workout
+                        entry.date = target_date
+                    entry.save()
+                break
+            except OperationalError as error:
+                if (
+                    connection.vendor != "sqlite"
+                    or "locked" not in str(error).lower()
+                    or attempt == 4
+                ):
+                    raise
+                sleep(0.05 * (attempt + 1))
+    else:
+        entry = form.save(commit=False)
+        entry.user = request.user
+        entry.workout = None
+        entry.date = target_date
+        entry.save()
 
     messages.success(request, f"Учтено {entry.calories_burned} ккал за {target_date:%d.%m.%Y}.")
     return _dashboard_redirect(target_date, view_mode)
