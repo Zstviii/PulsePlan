@@ -37,14 +37,14 @@
 </div>
 
 <div class="card border-0 shadow-sm mb-4">
-    <div class="card-header bg-white d-flex flex-wrap justify-content-between align-items-center py-3">
-        <div class="d-flex align-items-center gap-2">
+    <div class="card-header bg-white d-flex flex-wrap justify-content-between align-items-center gap-2 py-3">
+        <div class="calendar-navigation d-flex flex-wrap align-items-center gap-2">
             <a href="?date={{ prev_date|date:'Y-m-d' }}&mode={{ view_mode }}" class="btn btn-outline-secondary btn-sm">← Пред.</a>
             <span class="fw-bold fs-5 mx-2">{{ selected_date|date:"F Y" }}</span>
             <a href="?date={{ next_date|date:'Y-m-d' }}&mode={{ view_mode }}" class="btn btn-outline-secondary btn-sm">След. →</a>
             <a href="?mode={{ view_mode }}" class="btn btn-link btn-sm text-decoration-none">Сегодня</a>
         </div>
-        <div class="btn-group btn-group-sm">
+        <div class="calendar-modes btn-group btn-group-sm">
             <a href="?date={{ selected_date|date:'Y-m-d' }}&mode=week"
                class="btn {% if view_mode == 'week' %}btn-primary{% else %}btn-outline-primary{% endif %}">Неделя</a>
             <a href="?date={{ selected_date|date:'Y-m-d' }}&mode=month"
@@ -53,7 +53,7 @@
     </div>
 
     <div class="table-responsive">
-        <table class="table table-bordered mb-0">
+        <table class="table table-bordered mb-0 calendar-table">
             <thead class="table-light text-center small">
                 <tr>
                     <th>Пн</th><th>Вт</th><th>Ср</th><th>Чт</th><th>Пт</th><th>Сб</th><th>Вс</th>
@@ -66,18 +66,23 @@
                     <td class="cal-cell p-2 {% if day.is_selected %}cal-selected{% endif %} {% if day.is_today %}cal-today{% endif %} {% if not day.in_current_month and view_mode == 'month' %}text-muted bg-light{% endif %}">
                         <div class="d-flex justify-content-between align-items-center mb-1">
                             <a href="?date={{ day.date|date:'Y-m-d' }}&mode={{ view_mode }}"
-                               class="fw-bold text-decoration-none {% if day.is_selected %}text-primary{% else %}text-dark{% endif %}">
+                               class="cal-day-link fw-bold text-decoration-none {% if day.is_selected %}text-primary{% else %}text-dark{% endif %}">
                                 {{ day.date|date:"d.m" }}
                             </a>
+                            {% if day.workouts %}
+                                <span class="cal-day-count small text-primary" aria-label="{{ day.workouts|length }} тренировок">
+                                    {{ day.workouts|length }} <span class="visually-hidden">тренировок</span>
+                                </span>
+                            {% endif %}
                             {% if day.total_calories > 0 %}
-                                <span class="badge bg-danger-subtle text-danger border border-danger-subtle">
+                                <span class="cal-calories badge bg-danger-subtle text-danger border border-danger-subtle">
                                     🔥 {{ day.total_calories }} ккал
                                 </span>
                             {% endif %}
                         </div>
 
                         {% for w in day.workouts %}
-                            <div class="p-1 mb-1 rounded small {% if w.status == 'completed' %}bg-success-subtle text-success-emphasis{% elif w.status == 'skipped' %}bg-secondary-subtle text-secondary-emphasis text-decoration-line-through{% else %}bg-primary-subtle text-primary-emphasis{% endif %}">
+                            <div class="cal-workout-item p-1 mb-1 rounded small {% if w.status == 'completed' %}bg-success-subtle text-success-emphasis{% elif w.status == 'skipped' %}bg-secondary-subtle text-secondary-emphasis text-decoration-line-through{% else %}bg-primary-subtle text-primary-emphasis{% endif %}">
                                 <a href="?date={{ day.date|date:'Y-m-d' }}&mode={{ view_mode }}" class="text-decoration-none text-reset d-block">
                                     <strong>{{ w.scheduled_at|date:"H:i" }}</strong> {{ w.title }}
                                     {% if w.status == 'completed' %}✓{% elif w.status == 'skipped' %}✕{% endif %}
@@ -115,7 +120,7 @@
                                 {% endif %}
                             </div>
 
-                            <div class="d-flex flex-wrap align-items-center gap-1">
+                            <div class="workout-actions d-flex flex-wrap align-items-center gap-1">
                                 <form method="post" action="{% url 'workout_toggle_status' workout.id %}" class="btn-group btn-group-sm">
                                     {% csrf_token %}
                                     <input type="hidden" name="mode" value="{{ view_mode }}">
@@ -167,17 +172,42 @@
 
                         <ul class="list-group list-group-flush small mb-2">
                             {% for ex in workout.exercises.all %}
-                                <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
-                                    <span>{{ forloop.counter }}. <strong>{{ ex.name }}</strong></span>
-                                    <div class="d-flex align-items-center gap-2">
+                                <li class="list-group-item exercise-row px-0 d-flex justify-content-between align-items-center gap-2">
+                                    <span class="exercise-details">{{ forloop.counter }}. <strong>{{ ex.name }}</strong>
                                         <span class="text-secondary">
                                             {{ ex.sets }} подх. × {{ ex.reps }} повт.
                                             ({% if ex.weight_kg > 0 %}{{ ex.weight_kg }} кг{% else %}свой вес{% endif %})
                                         </span>
+                                    </span>
+                                    <div class="d-flex align-items-center gap-2 flex-shrink-0">
+                                        <button type="button" class="btn btn-outline-primary btn-sm"
+                                                data-bs-toggle="collapse" data-bs-target="#edit-exercise-{{ ex.id }}"
+                                                aria-label="Редактировать {{ ex.name }}">✏️</button>
                                         <form method="post" action="{% url 'exercise_delete' ex.id %}" class="m-0">
                                             {% csrf_token %}
                                             <input type="hidden" name="mode" value="{{ view_mode }}">
                                             <button type="submit" class="btn btn-link text-danger p-0 text-decoration-none fw-bold">×</button>
+                                        </form>
+                                    </div>
+                                    <div class="collapse w-100" id="edit-exercise-{{ ex.id }}">
+                                        <form method="post" action="{% url 'exercise_update' ex.id %}" class="row g-2 p-2 bg-light rounded border">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="mode" value="{{ view_mode }}">
+                                            <div class="col-12 col-sm-5">
+                                                <input type="text" name="name" class="form-control form-control-sm" value="{{ ex.name }}" required>
+                                            </div>
+                                            <div class="col-4 col-sm-2">
+                                                <input type="number" name="sets" class="form-control form-control-sm" value="{{ ex.sets }}" min="1" max="100" required aria-label="Подходы">
+                                            </div>
+                                            <div class="col-4 col-sm-2">
+                                                <input type="number" name="reps" class="form-control form-control-sm" value="{{ ex.reps }}" min="1" max="1000" required aria-label="Повторения">
+                                            </div>
+                                            <div class="col-4 col-sm-2">
+                                                <input type="number" step="0.5" name="weight_kg" class="form-control form-control-sm" value="{{ ex.weight_kg|floatformat:'-1u' }}" min="0" max="999.9" required aria-label="Вес в килограммах">
+                                            </div>
+                                            <div class="col-12 col-sm-1 d-grid">
+                                                <button type="submit" class="btn btn-primary btn-sm" aria-label="Сохранить упражнение">✓</button>
+                                            </div>
                                         </form>
                                     </div>
                                 </li>
