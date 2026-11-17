@@ -1,7 +1,7 @@
 """
 Скрипт наполнения БД демонстрационными данными для MVP «PulsePlan».
 Создаёт:
-  - 1 тестового пользователя (логин: demo_user, пароль: PulsePlan2026!)
+  - 1 тестового пользователя (логин: demo_user, пароль из PULSEPLAN_DEMO_PASSWORD)
   - 3 тренировки на текущую неделю (1 выполненная, 2 запланированные)
   - Набор базовых упражнений для каждой тренировки
   - Записи о расходе калорий (привязанные к тренировке и дневной активности)
@@ -9,8 +9,11 @@
 Способ запуска:
   python manage.py shell < seed_pulseplan.py
 """
+import os
 from datetime import datetime, time, timedelta
+from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.management.base import CommandError
 from django.utils import timezone
 from workout.models import DailyCalories, Exercise, Workout
 
@@ -18,14 +21,20 @@ User = get_user_model()
 
 
 def run_seed():
+    if not settings.DEBUG:
+        raise CommandError("Демо-данные разрешено создавать только при DJANGO_DEBUG=True.")
+    demo_password = os.environ.get("PULSEPLAN_DEMO_PASSWORD")
+    if not demo_password:
+        raise CommandError("Для демо-пользователя задайте PULSEPLAN_DEMO_PASSWORD.")
+
     user, created = User.objects.get_or_create(
         username="demo_user",
         defaults={"email": "demo@pulseplan.local", "first_name": "Алексей"},
     )
     if created:
-        user.set_password("PulsePlan2026!")
+        user.set_password(demo_password)
         user.save()
-        print("[OK] Создан пользователь: demo_user (пароль: PulsePlan2026!)")
+        print("[OK] Создан пользователь demo_user.")
     else:
         print("[INFO] Пользователь demo_user уже существует, обновляем демо-данные...")
         Workout.objects.filter(user=user).delete()
