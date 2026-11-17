@@ -15,6 +15,12 @@ class Workout(models.Model):
         COMPLETED = "completed", "Выполнена"
         SKIPPED = "skipped", "Пропущена"
 
+    ALLOWED_STATUS_TRANSITIONS = {
+        Status.PLANNED: {Status.COMPLETED, Status.SKIPPED},
+        Status.COMPLETED: {Status.PLANNED, Status.SKIPPED},
+        Status.SKIPPED: {Status.PLANNED},
+    }
+
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -41,9 +47,32 @@ class Workout(models.Model):
         local_dt = timezone.localtime(self.scheduled_at)
         return f"{self.title} ({local_dt:%d.%m.%Y %H:%M})"
 
+    @classmethod
+    def can_transition(cls, current_status: str, new_status: str) -> bool:
+        return (
+            current_status == new_status
+            or new_status in cls.ALLOWED_STATUS_TRANSITIONS.get(current_status, set())
+        )
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        if self.pk:
+            current_status = type(self).objects.filter(pk=self.pk).values_list(
+                "status", flat=True
+            ).first()
+            if current_status is not None and not self.can_transition(
+                current_status, self.status
+            ):
+                raise ValidationError(
+                    {"status": f"Недопустимый переход статуса: {current_status} → {self.status}."}
+                )
+        super().save(*args, **kwargs)
+
     @property
     def total_calories(self) -> int:
         """Суммарный расход калорий, привязанных к данной тренировке."""
+        if self.status != self.Status.COMPLETED:
+            return 0
         result = self.calorie_entries.aggregate(total=Sum("calories_burned"))["total"]
         return result or 0
 
@@ -87,6 +116,10 @@ class Exercise(models.Model):
         weight_label = f"{self.weight_kg} кг" if self.weight_kg > 0 else "свой вес"
         return f"{self.name}: {self.sets}×{self.reps} ({weight_label})"
 
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
 
 class DailyCalories(models.Model):
     """Запись о потраченных калориях (по тренировке или общей активности за день)."""
@@ -128,6 +161,10 @@ class DailyCalories(models.Model):
         if self.workout_id and self.user_id and self.workout.user_id != self.user_id:
             raise ValidationError(
                 {"workout": "Нельзя привязать калории к тренировке другого пользователя."}
+            )
+        if self.workout_id and self.workout.status != Workout.Status.COMPLETED:
+            raise ValidationError(
+                {"workout": "Калории можно привязать только к завершённой тренировке."}
             )
 
     def save(self, *args, **kwargs):
