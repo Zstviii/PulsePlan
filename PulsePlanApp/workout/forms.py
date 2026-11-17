@@ -21,7 +21,7 @@ class WorkoutForm(forms.ModelForm):
 
     class Meta:
         model = Workout
-        fields = ["title", "status", "notes"]
+        fields = ["title", "notes"]
         error_messages = {
             "title": {
                 "required": "Укажите название тренировки.",
@@ -29,22 +29,11 @@ class WorkoutForm(forms.ModelForm):
             }
         }
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # При создании из формы шаблон может не передавать status — ставим planned по умолчанию
-        self.fields["status"].required = False
-
     def clean_title(self) -> str:
         title = (self.cleaned_data.get("title") or "").strip()
         if not title:
             raise forms.ValidationError("Укажите название тренировки.")
         return title
-
-    def clean_status(self) -> str:
-        status = self.cleaned_data.get("status")
-        if not status:
-            return self.instance.status if self.instance.pk else Workout.Status.PLANNED
-        return status
 
     def save(self, user=None, commit: bool = True) -> Workout:
         workout = super().save(commit=False)
@@ -73,7 +62,7 @@ class WorkoutForm(forms.ModelForm):
 
 
 class ExerciseForm(forms.ModelForm):
-    """Форма добавления упражнения к тренировке."""
+    """Форма добавления или редактирования упражнения."""
 
     class Meta:
         model = Exercise
