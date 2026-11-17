@@ -32,6 +32,11 @@ urlpatterns = [
         views.exercise_delete_view,
         name="exercise_delete",
     ),
+    path(
+        "exercise/<int:exercise_id>/edit/",
+        views.exercise_update_view,
+        name="exercise_update",
+    ),
     path("calories/add/", views.calorie_create_view, name="calorie_create"),
     path(
         "calories/<int:calorie_id>/delete/",
