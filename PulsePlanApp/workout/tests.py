@@ -1,8 +1,14 @@
-from django.contrib.auth import get_user_model
-from django.test import TestCase
-from django.urls import reverse
+from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 
-from .models import DailyCalories, Workout
+from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
+from django.db import close_old_connections
+from django.test import Client, TestCase, TransactionTestCase
+from django.urls import reverse
+from django.utils import timezone
+
+from .models import DailyCalories, Exercise, Workout
 
 User = get_user_model()
 
@@ -41,3 +47,305 @@ class WorkoutOwnershipTests(TestCase):
         )
         self.assertEqual(response.status_code, 404)
         self.assertEqual(DailyCalories.objects.count(), 0)
+
+    def test_owner_can_edit_workout_and_move_its_calorie_date(self):
+        self.client.force_login(self.alice)
+        self.alice_workout.status = Workout.Status.COMPLETED
+        self.alice_workout.save(update_fields=["status"])
+        calorie = DailyCalories.objects.create(
+            user=self.alice,
+            workout=self.alice_workout,
+            calories_burned=300,
+        )
+        target_date = timezone.localdate() + timedelta(days=2)
+
+        response = self.client.post(
+            reverse("workout_update", args=[self.alice_workout.id]),
+            {
+                "title": "Измененная тренировка",
+                "date": target_date.isoformat(),
+                "time": "10:30",
+                "notes": "Новая заметка",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.alice_workout.refresh_from_db()
+        calorie.refresh_from_db()
+        self.assertEqual(self.alice_workout.title, "Измененная тренировка")
+        self.assertEqual(timezone.localtime(self.alice_workout.scheduled_at).date(), target_date)
+        self.assertEqual(calorie.date, target_date)
+        self.assertEqual(calorie.calories_burned, 300)
+        self.assertEqual(Workout.objects.count(), 1)
+
+    def test_other_user_cannot_edit_or_delete_workout(self):
+        self.client.force_login(self.bob)
+        edit_response = self.client.post(
+            reverse("workout_update", args=[self.alice_workout.id]),
+            {"title": "Подмена", "date": "2030-01-01", "time": "10:00"},
+        )
+        delete_response = self.client.post(
+            reverse("workout_delete", args=[self.alice_workout.id])
+        )
+
+        self.assertEqual(edit_response.status_code, 404)
+        self.assertEqual(delete_response.status_code, 404)
+        self.alice_workout.refresh_from_db()
+        self.assertEqual(self.alice_workout.title, "Тренировка Алисы")
+
+    def test_owner_can_create_workout(self):
+        self.client.force_login(self.alice)
+
+        response = self.client.post(
+            reverse("workout_create"),
+            {
+                "title": "Новая тренировка",
+                "date": timezone.localdate().isoformat(),
+                "time": "18:30",
+                "notes": "",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(Workout.objects.filter(user=self.alice).count(), 2)
+        self.assertTrue(
+            Workout.objects.filter(user=self.alice, title="Новая тренировка").exists()
+        )
+
+    def test_invalid_workout_edit_does_not_change_existing_data(self):
+        self.client.force_login(self.alice)
+        response = self.client.post(
+            reverse("workout_update", args=[self.alice_workout.id]),
+            {"title": "   ", "date": "not-a-date", "time": "10:00"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.alice_workout.refresh_from_db()
+        self.assertEqual(self.alice_workout.title, "Тренировка Алисы")
+
+    def test_workout_edit_form_cannot_change_status(self):
+        self.client.force_login(self.alice)
+
+        self.client.post(
+            reverse("workout_update", args=[self.alice_workout.id]),
+            {
+                "title": self.alice_workout.title,
+                "date": timezone.localdate().isoformat(),
+                "time": "18:00",
+                "status": Workout.Status.COMPLETED,
+            },
+        )
+
+        self.alice_workout.refresh_from_db()
+        self.assertEqual(self.alice_workout.status, Workout.Status.PLANNED)
+
+    def test_completed_workout_calorie_post_is_idempotent(self):
+        self.client.force_login(self.alice)
+        self.alice_workout.status = Workout.Status.COMPLETED
+        self.alice_workout.save(update_fields=["status"])
+        url = reverse("calorie_create")
+        data = {"calories_burned": 300, "workout_id": self.alice_workout.id}
+
+        self.client.post(url, data)
+        self.client.post(url, data)
+
+        entries = DailyCalories.objects.filter(workout=self.alice_workout)
+        self.assertEqual(entries.count(), 1)
+        self.assertEqual(entries.get().calories_burned, 300)
+
+    def test_calories_cannot_be_logged_for_uncompleted_workout(self):
+        self.client.force_login(self.alice)
+
+        self.client.post(
+            reverse("calorie_create"),
+            {"calories_burned": 300, "workout_id": self.alice_workout.id},
+        )
+
+        self.assertFalse(DailyCalories.objects.filter(workout=self.alice_workout).exists())
+
+    def test_status_transitions_are_limited_and_repeated_completion_is_safe(self):
+        self.client.force_login(self.alice)
+        url = reverse("workout_toggle_status", args=[self.alice_workout.id])
+
+        completed = self.client.post(url, {"status": Workout.Status.COMPLETED})
+        repeated = self.client.post(url, {"status": Workout.Status.COMPLETED})
+        self.alice_workout.status = Workout.Status.SKIPPED
+        self.alice_workout.save(update_fields=["status"])
+        invalid = self.client.post(url, {"status": Workout.Status.COMPLETED})
+
+        self.assertEqual(completed.status_code, 302)
+        self.assertEqual(repeated.status_code, 302)
+        self.assertEqual(invalid.status_code, 302)
+        self.alice_workout.refresh_from_db()
+        self.assertEqual(self.alice_workout.status, Workout.Status.SKIPPED)
+
+    def test_direct_model_save_rejects_invalid_status_transition(self):
+        self.alice_workout.status = Workout.Status.SKIPPED
+        self.alice_workout.save(update_fields=["status"])
+        self.alice_workout.status = Workout.Status.COMPLETED
+
+        with self.assertRaises(ValidationError):
+            self.alice_workout.save(update_fields=["status"])
+
+    def test_uncompleted_workout_calories_are_not_counted(self):
+        self.client.force_login(self.alice)
+        self.alice_workout.status = Workout.Status.COMPLETED
+        self.alice_workout.save(update_fields=["status"])
+        DailyCalories.objects.create(
+            user=self.alice,
+            workout=self.alice_workout,
+            calories_burned=300,
+        )
+        self.alice_workout.status = Workout.Status.PLANNED
+        self.alice_workout.save(update_fields=["status"])
+        DailyCalories.objects.create(user=self.alice, calories_burned=50)
+
+        response = self.client.get(
+            reverse("dashboard"),
+            {"date": timezone.localdate().isoformat()},
+        )
+
+        self.assertEqual(response.context["selected_day_total_calories"], 50)
+
+    def test_deleting_completed_workout_removes_linked_calories_and_exercises(self):
+        self.client.force_login(self.alice)
+        self.alice_workout.status = Workout.Status.COMPLETED
+        self.alice_workout.save(update_fields=["status"])
+        self.alice_workout.exercises.create(name="Присед", sets=3, reps=10)
+        self.alice_workout.exercises.create(name="Жим", sets=3, reps=8)
+        DailyCalories.objects.create(
+            user=self.alice,
+            workout=self.alice_workout,
+            calories_burned=300,
+        )
+        standalone = DailyCalories.objects.create(
+            user=self.alice,
+            calories_burned=50,
+        )
+
+        response = self.client.post(
+            reverse("workout_delete", args=[self.alice_workout.id])
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(Workout.objects.filter(pk=self.alice_workout.pk).exists())
+        self.assertEqual(Exercise.objects.count(), 0)
+        self.assertEqual(DailyCalories.objects.count(), 1)
+        self.assertTrue(DailyCalories.objects.filter(pk=standalone.pk).exists())
+        dashboard = self.client.get(
+            reverse("dashboard"),
+            {"date": timezone.localdate().isoformat()},
+        )
+        self.assertEqual(dashboard.context["total_completed_workouts"], 0)
+        self.assertEqual(dashboard.context["selected_day_total_calories"], 50)
+
+    def test_calorie_entry_is_hidden_from_totals_when_status_is_reverted(self):
+        self.client.force_login(self.alice)
+        self.alice_workout.status = Workout.Status.COMPLETED
+        self.alice_workout.save(update_fields=["status"])
+        url = reverse("calorie_create")
+        data = {"calories_burned": 300, "workout_id": self.alice_workout.id}
+        self.client.post(url, data)
+        status_url = reverse("workout_toggle_status", args=[self.alice_workout.id])
+
+        self.client.post(status_url, {"status": Workout.Status.PLANNED})
+        hidden_total = self.client.get(
+            reverse("dashboard"),
+            {"date": timezone.localdate().isoformat()},
+        ).context["selected_day_total_calories"]
+        self.client.post(status_url, {"status": Workout.Status.COMPLETED})
+        restored_total = self.client.get(
+            reverse("dashboard"),
+            {"date": timezone.localdate().isoformat()},
+        ).context["selected_day_total_calories"]
+
+        self.assertEqual(hidden_total, 0)
+        self.assertEqual(restored_total, 300)
+        self.assertEqual(DailyCalories.objects.filter(workout=self.alice_workout).count(), 1)
+
+    def test_owner_can_edit_existing_exercise_without_creating_another(self):
+        self.client.force_login(self.alice)
+        exercise = self.alice_workout.exercises.create(name="Присед", sets=3, reps=10)
+
+        response = self.client.post(
+            reverse("exercise_update", args=[exercise.id]),
+            {"name": "Приседания", "sets": 4, "reps": 8, "weight_kg": "20.0"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        exercise.refresh_from_db()
+        self.assertEqual(exercise.name, "Приседания")
+        self.assertEqual(exercise.sets, 4)
+        self.assertEqual(self.alice_workout.exercises.count(), 1)
+
+    def test_other_user_cannot_edit_or_delete_exercise(self):
+        exercise = self.alice_workout.exercises.create(name="Присед")
+        self.client.force_login(self.bob)
+
+        edit_response = self.client.post(
+            reverse("exercise_update", args=[exercise.id]),
+            {"name": "Подмена", "sets": 3, "reps": 10, "weight_kg": 0},
+        )
+        delete_response = self.client.post(
+            reverse("exercise_delete", args=[exercise.id])
+        )
+
+        self.assertEqual(edit_response.status_code, 404)
+        self.assertEqual(delete_response.status_code, 404)
+        self.assertTrue(self.alice_workout.exercises.filter(pk=exercise.pk).exists())
+
+    def test_owner_can_delete_exercise_without_deleting_workout(self):
+        exercise = self.alice_workout.exercises.create(name="Присед")
+        self.client.force_login(self.alice)
+
+        response = self.client.post(
+            reverse("exercise_delete", args=[exercise.id])
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(Exercise.objects.filter(pk=exercise.pk).exists())
+        self.assertTrue(Workout.objects.filter(pk=self.alice_workout.pk).exists())
+
+    def test_exercise_model_save_validates_numeric_values(self):
+        exercise = self.alice_workout.exercises.model(
+            workout=self.alice_workout,
+            name="Присед",
+            sets=0,
+            reps=10,
+        )
+
+        with self.assertRaises(ValidationError):
+            exercise.save()
+
+
+class ParallelWorkoutCalorieTests(TransactionTestCase):
+    def test_parallel_posts_create_only_one_linked_calorie_entry(self):
+        user = User.objects.create_user(username="parallel", password="Password123!")
+        workout = Workout.objects.create(
+            user=user,
+            title="Параллельная тренировка",
+            status=Workout.Status.COMPLETED,
+        )
+        client = Client()
+        client.force_login(user)
+        session_key = client.cookies["sessionid"].value
+
+        def post_calories(_):
+            close_old_connections()
+            client = Client()
+            client.cookies["sessionid"] = session_key
+            try:
+                response = client.post(
+                    reverse("calorie_create"),
+                    {"calories_burned": 300, "workout_id": workout.pk},
+                    HTTP_HOST="localhost",
+                )
+                return response.status_code
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            responses = list(executor.map(post_calories, range(4)))
+
+        self.assertEqual(responses, [302] * 4)
+        self.assertEqual(DailyCalories.objects.filter(workout=workout).count(), 1)
