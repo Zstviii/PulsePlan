@@ -1,117 +1,153 @@
-"""
-Скрипт наполнения БД демонстрационными данными для MVP «PulsePlan».
-Создаёт:
-  - 1 тестового пользователя (логин: demo_user, пароль из PULSEPLAN_DEMO_PASSWORD)
-  - 3 тренировки на текущую неделю (1 выполненная, 2 запланированные)
-  - Набор базовых упражнений для каждой тренировки
-  - Записи о расходе калорий (привязанные к тренировке и дневной активности)
-
-Способ запуска:
-  python manage.py shell < seed_pulseplan.py
-"""
 import os
+import sys
 from datetime import datetime, time, timedelta
+from decimal import Decimal
+
+import django
+
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+django.setup()
+
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.management.base import CommandError
+from django.db import transaction
 from django.utils import timezone
+
 from workout.models import DailyCalories, Exercise, Workout
 
-User = get_user_model()
+DEMO_USERNAME = "demo_user"
 
 
-def run_seed():
+def _aware_dt(target_date, hour=18, minute=30):
+    return timezone.make_aware(datetime.combine(target_date, time(hour, minute)))
+
+
+def _create_validated_exercises(workout: Workout, items: list[dict]) -> None:
+    exercises = []
+    for idx, item in enumerate(items, start=1):
+        ex = Exercise(
+            workout=workout,
+            name=item["name"],
+            sets=item.get("sets", 3),
+            reps=item.get("reps", 10),
+            weight_kg=Decimal(str(item.get("weight_kg", "0.0"))),
+            order=idx,
+        )
+        ex.full_clean()
+        exercises.append(ex)
+    Exercise.objects.bulk_create(exercises)
+
+
+def run_seed(reset: bool = False) -> None:
     if not settings.DEBUG:
         raise CommandError("Демо-данные разрешено создавать только при DJANGO_DEBUG=True.")
+
     demo_password = os.environ.get("PULSEPLAN_DEMO_PASSWORD")
     if not demo_password:
         raise CommandError("Для демо-пользователя задайте PULSEPLAN_DEMO_PASSWORD.")
 
-    user, created = User.objects.get_or_create(
-        username="demo_user",
-        defaults={"email": "demo@pulseplan.local", "first_name": "Алексей"},
-    )
-    if created:
-        user.set_password(demo_password)
-        user.save()
-        print("[OK] Создан пользователь demo_user.")
-    else:
-        print("[INFO] Пользователь demo_user уже существует, обновляем демо-данные...")
-        Workout.objects.filter(user=user).delete()
-        DailyCalories.objects.filter(user=user).delete()
+    User = get_user_model()
 
-    today = timezone.localdate()
-    monday = today - timedelta(days=today.weekday())
+    with transaction.atomic():
+        user, created = User.objects.select_for_update().get_or_create(
+            username=DEMO_USERNAME,
+            defaults={"email": "demo@pulseplan.local", "first_name": "Алексей"},
+        )
 
-    def aware_dt(target_date, hour=18, minute=30):
-        return timezone.make_aware(datetime.combine(target_date, time(hour, minute)))
+        if user.is_superuser or user.is_staff:
+            raise CommandError("Запрещено изменять административные учётные записи через seed.")
 
-    # 1. Тренировка в понедельник (Выполнена)
-    w1 = Workout.objects.create(
-        user=user,
-        title="Фулбоди А: Базовая адаптация",
-        scheduled_at=aware_dt(monday, 18, 30),
-        status=Workout.Status.COMPLETED,
-        notes="Разминка суставов 7 минут, спокойный темп без отказа.",
-    )
-    Exercise.objects.bulk_create([
-        Exercise(workout=w1, name="Приседания с собственным весом", sets=3, reps=15, weight_kg=0, order=1),
-        Exercise(workout=w1, name="Отжимания от скамьи / с колен", sets=3, reps=12, weight_kg=0, order=2),
-        Exercise(workout=w1, name="Тяга гантелей в наклоне", sets=3, reps=12, weight_kg=8.0, order=3),
-        Exercise(workout=w1, name="Планка классическая (сек)", sets=3, reps=40, weight_kg=0, order=4),
-    ])
-    DailyCalories.objects.create(
-        user=user,
-        workout=w1,
-        date=monday,
-        calories_burned=320,
-        activity_note="Силовая тренировка Фулбоди А",
-    )
-    DailyCalories.objects.create(
-        user=user,
-        workout=None,
-        date=monday,
-        calories_burned=180,
-        activity_note="Вечерняя прогулка 6 500 шагов",
-    )
+        if created:
+            user.set_password(demo_password)
+            user.save(update_fields=["password"])
+        elif not reset:
+            print(
+                "demo_user уже существует, данные сохранены. "
+                "Для пересоздания передайте --reset."
+            )
+            return
+        else:
+            Workout.objects.filter(user=user).delete()
+            DailyCalories.objects.filter(user=user).delete()
 
-    # 2. Тренировка на сегодня (Запланирована)
-    w2 = Workout.objects.create(
-        user=user,
-        title="Кардио + Кор: Выносливость",
-        scheduled_at=aware_dt(today, 19, 0),
-        status=Workout.Status.PLANNED,
-        notes="Следить за пульсом в зоне 125–140 уд/мин.",
-    )
-    Exercise.objects.bulk_create([
-        Exercise(workout=w2, name="Быстрая ходьба на дорожке (мин)", sets=1, reps=20, weight_kg=0, order=1),
-        Exercise(workout=w2, name="Скручивания на коврике", sets=3, reps=15, weight_kg=0, order=2),
-        Exercise(workout=w2, name="Ягодичный мостик", sets=3, reps=15, weight_kg=0, order=3),
-    ])
-    DailyCalories.objects.create(
-        user=user,
-        workout=None,
-        date=today,
-        calories_burned=210,
-        activity_note="Утренняя разминка и пешая дорога до офиса",
-    )
+        today = timezone.localdate()
+        monday = today - timedelta(days=today.weekday())
 
-    # 3. Тренировка через 2 дня (Запланирована)
-    future_day = today + timedelta(days=2)
-    w3 = Workout.objects.create(
-        user=user,
-        title="Фулбоди Б: Техника и тонус",
-        scheduled_at=aware_dt(future_day, 18, 30),
-        status=Workout.Status.PLANNED,
-        notes="Фокус на плавной негативной фазе движения.",
-    )
-    Exercise.objects.bulk_create([
-        Exercise(workout=w3, name="Выпады на месте", sets=3, reps=10, weight_kg=0, order=1),
-        Exercise(workout=w3, name="Жим гантелей сидя", sets=3, reps=12, weight_kg=6.0, order=2),
-        Exercise(workout=w3, name="Гиперэкстензия", sets=3, reps=15, weight_kg=0, order=3),
-    ])
+        w1 = Workout.objects.create(
+            user=user,
+            title="Фулбоди А: Базовая адаптация",
+            scheduled_at=_aware_dt(monday, 18, 30),
+            status=Workout.Status.COMPLETED,
+            notes="Разминка суставов 7 минут, спокойный темп без отказа.",
+        )
+        _create_validated_exercises(
+            w1,
+            [
+                {"name": "Приседания с собственным весом", "sets": 3, "reps": 15, "weight_kg": 0},
+                {"name": "Отжимания от скамьи / с колен", "sets": 3, "reps": 12, "weight_kg": 0},
+                {"name": "Тяга гантелей в наклоне", "sets": 3, "reps": 12, "weight_kg": 8.0},
+                {"name": "Планка классическая (сек)", "sets": 3, "reps": 40, "weight_kg": 0},
+            ],
+        )
+        DailyCalories.objects.create(
+            user=user,
+            workout=w1,
+            date=monday,
+            calories_burned=320,
+            activity_note="Силовая тренировка Фулбоди А",
+        )
+        DailyCalories.objects.create(
+            user=user,
+            workout=None,
+            date=monday,
+            calories_burned=180,
+            activity_note="Вечерняя прогулка 6 500 шагов",
+        )
 
-    print("[OK] Успешно создано 3 тренировки, 10 упражнений и 3 записи калорий.")
+        w2 = Workout.objects.create(
+            user=user,
+            title="Кардио + Кор: Выносливость",
+            scheduled_at=_aware_dt(today, 19, 0),
+            status=Workout.Status.PLANNED,
+            notes="Следить за пульсом в зоне 125–140 уд/мин.",
+        )
+        _create_validated_exercises(
+            w2,
+            [
+                {"name": "Быстрая ходьба на дорожке (мин)", "sets": 1, "reps": 20, "weight_kg": 0},
+                {"name": "Скручивания на коврике", "sets": 3, "reps": 15, "weight_kg": 0},
+                {"name": "Ягодичный мостик", "sets": 3, "reps": 15, "weight_kg": 0},
+            ],
+        )
+        DailyCalories.objects.create(
+            user=user,
+            workout=None,
+            date=today,
+            calories_burned=210,
+            activity_note="Утренняя разминка",
+        )
+
+        future_day = today + timedelta(days=2)
+        w3 = Workout.objects.create(
+            user=user,
+            title="Фулбоди Б: Техника и тонус",
+            scheduled_at=_aware_dt(future_day, 18, 30),
+            status=Workout.Status.PLANNED,
+            notes="Фокус на плавной негативной фазе движения.",
+        )
+        _create_validated_exercises(
+            w3,
+            [
+                {"name": "Выпады на месте", "sets": 3, "reps": 10, "weight_kg": 0},
+                {"name": "Жим гантелей сидя", "sets": 3, "reps": 12, "weight_kg": 6.0},
+                {"name": "Гиперэкстензия", "sets": 3, "reps": 15, "weight_kg": 0},
+            ],
+        )
+
+    print("Демо-данные PulsePlan успешно созданы.")
 
 
-run_seed()
+if __name__ == "__main__":
+    reset_flag = "--reset" in sys.argv
+    run_seed(reset=reset_flag)

@@ -19,7 +19,6 @@ from .models import DailyCalories, Exercise, Workout
 
 
 def _parse_selected_date(raw_date: str | None) -> date:
-    """Парсит дату из query-параметра ?date=YYYY-MM-DD с откатом на сегодня."""
     if raw_date:
         try:
             return date.fromisoformat(raw_date)
@@ -28,42 +27,52 @@ def _parse_selected_date(raw_date: str | None) -> date:
     return timezone.localdate()
 
 
+def _parse_anchor_day(raw_day: str | None, fallback_day: int) -> int:
+    if raw_day:
+        try:
+            val = int(raw_day)
+            if 1 <= val <= 31:
+                return val
+        except ValueError:
+            pass
+    return fallback_day
+
+
 def _normalize_view_mode(raw_mode: str | None) -> str:
-    """Возвращает валидный режим отображения календаря ('week' или 'month')."""
     return raw_mode if raw_mode in {"week", "month"} else "week"
 
 
-def _shift_month(target_date: date, delta_months: int) -> date:
-    """Корректно сдвигает дату на delta_months месяцев с сохранением валидного дня."""
-    total_months = (target_date.year * 12 + (target_date.month - 1)) + delta_months
-    new_year = total_months // 12
-    new_month = (total_months % 12) + 1
+def _shift_month(target_date: date, delta_months: int, anchor_day: int | None = None) -> date:
+    month_index = target_date.year * 12 + target_date.month - 1 + delta_months
+    new_year, month_offset = divmod(month_index, 12)
+    new_month = month_offset + 1
+    if not 1 <= new_year <= 9999:
+        return target_date
     _, max_day = calendar.monthrange(new_year, new_month)
-    return date(new_year, new_month, min(target_date.day, max_day))
+    desired_day = anchor_day if anchor_day is not None else target_date.day
+    return date(new_year, new_month, min(desired_day, max_day))
 
 
-def _dashboard_redirect(target_date: date, view_mode: str | None = None):
-    """Строит редирект на дашборд с сохранением выбранной даты и режима календаря."""
+def _dashboard_redirect(target_date: date, view_mode: str | None = None, anchor_day: int | None = None):
     params = {"date": target_date.isoformat()}
     if view_mode in {"week", "month"}:
         params["mode"] = view_mode
+    if anchor_day is not None:
+        params["day"] = anchor_day
     return redirect(f"{reverse('dashboard')}?{urlencode(params)}")
 
 
 def _flash_form_errors(request, form) -> None:
-    """Выводит ошибки формы в Django messages."""
     for field_errors in form.errors.values():
         for err in field_errors:
             messages.error(request, err)
 
 
 def _get_user_workout(user, workout_id: int) -> Workout:
-    """Возвращает тренировку только если она принадлежит текущему пользователю, иначе 404."""
     return get_object_or_404(Workout, id=workout_id, user=user)
 
 
 def register_view(request):
-    """Регистрация нового пользователя с автоматическим входом."""
     if request.user.is_authenticated:
         return redirect("dashboard")
 
@@ -78,7 +87,6 @@ def register_view(request):
 
 
 def login_view(request):
-    """Вход пользователя в систему."""
     if request.user.is_authenticated:
         return redirect("dashboard")
 
@@ -92,19 +100,16 @@ def login_view(request):
 
 @require_POST
 def logout_view(request):
-    """Выход из профиля."""
     logout(request)
     return redirect("login")
 
 
 @login_required
 def dashboard_view(request):
-    """
-    Личный кабинет и интерактивный календарь тренировок (неделя / месяц)
-    с подсчётом калорий за выбранную дату.
-    """
     selected_date = _parse_selected_date(request.GET.get("date"))
+    anchor_day = _parse_anchor_day(request.GET.get("day"), selected_date.day)
     view_mode = _normalize_view_mode(request.GET.get("mode"))
+    today = timezone.localdate()
 
     start_of_week = selected_date - timedelta(days=selected_date.weekday())
     end_of_week = start_of_week + timedelta(days=6)
@@ -114,8 +119,8 @@ def dashboard_view(request):
         month_weeks = cal.monthdatescalendar(selected_date.year, selected_date.month)
         range_start = month_weeks[0][0]
         range_end = month_weeks[-1][-1]
-        prev_date = _shift_month(selected_date, -1)
-        next_date = _shift_month(selected_date, 1)
+        prev_date = _shift_month(selected_date, -1, anchor_day)
+        next_date = _shift_month(selected_date, 1, anchor_day)
     else:
         month_weeks = [[start_of_week + timedelta(days=i) for i in range(7)]]
         range_start = start_of_week
@@ -123,10 +128,25 @@ def dashboard_view(request):
         prev_date = selected_date - timedelta(days=7)
         next_date = selected_date + timedelta(days=7)
 
+    stats_range_start = min(range_start, start_of_week)
+    stats_range_end = max(range_end, end_of_week)
+
+    tz = timezone.get_current_timezone()
+    dt_start = timezone.make_aware(
+        timezone.datetime.combine(stats_range_start, timezone.datetime.min.time()), tz
+    )
+    dt_end = timezone.make_aware(
+        timezone.datetime.combine(
+            stats_range_end + timedelta(days=1), timezone.datetime.min.time()
+        ),
+        tz,
+    )
+
     workouts_qs = (
         Workout.objects.filter(
             user=request.user,
-            scheduled_at__date__range=(range_start, range_end),
+            scheduled_at__gte=dt_start,
+            scheduled_at__lt=dt_end,
         )
         .prefetch_related("exercises", "calorie_entries")
         .order_by("scheduled_at")
@@ -140,15 +160,15 @@ def dashboard_view(request):
     calories_by_day_qs = (
         DailyCalories.objects.filter(
             user=request.user,
-            date__range=(range_start, range_end),
-        ).filter(Q(workout__isnull=True) | Q(workout__status=Workout.Status.COMPLETED))
+            date__range=(stats_range_start, stats_range_end),
+        )
+        .filter(Q(workout__isnull=True) | Q(workout__status=Workout.Status.COMPLETED))
         .values("date")
         .annotate(day_total=Sum("calories_burned"))
     )
     calories_by_day = {row["date"]: row["day_total"] for row in calories_by_day_qs}
 
     calendar_weeks = []
-    today = timezone.localdate()
     for week in month_weeks:
         week_days = []
         for day in week:
@@ -165,11 +185,11 @@ def dashboard_view(request):
         calendar_weeks.append(week_days)
 
     selected_day_workouts = workouts_by_day.get(selected_date, [])
-    selected_day_calorie_logs = DailyCalories.objects.filter(
-        user=request.user, date=selected_date
-    ).filter(
-        Q(workout__isnull=True) | Q(workout__status=Workout.Status.COMPLETED)
-    ).select_related("workout")
+    selected_day_calorie_logs = (
+        DailyCalories.objects.filter(user=request.user, date=selected_date)
+        .filter(Q(workout__isnull=True) | Q(workout__status=Workout.Status.COMPLETED))
+        .select_related("workout")
+    )
     selected_day_total_calories = (
         selected_day_calorie_logs.aggregate(total=Sum("calories_burned"))["total"] or 0
     )
@@ -177,12 +197,25 @@ def dashboard_view(request):
     total_completed_workouts = Workout.objects.filter(
         user=request.user, status=Workout.Status.COMPLETED
     ).count()
+
     week_total_calories = sum(
         calories_by_day.get(start_of_week + timedelta(days=i), 0) for i in range(7)
     )
 
+    week_workouts_count = sum(
+        len(workouts_by_day.get(start_of_week + timedelta(days=i), []))
+        for i in range(7)
+    )
+
+    completed_on_selected_day = [
+        w for w in selected_day_workouts if w.status == Workout.Status.COMPLETED
+    ]
+
     context = {
         "selected_date": selected_date,
+        "anchor_day": anchor_day,
+        "today": today,
+        "is_future_selected": selected_date > today,
         "view_mode": view_mode,
         "calendar_weeks": calendar_weeks,
         "prev_date": prev_date,
@@ -192,18 +225,19 @@ def dashboard_view(request):
         "selected_day_total_calories": selected_day_total_calories,
         "total_completed_workouts": total_completed_workouts,
         "week_total_calories": week_total_calories,
+        "week_workouts_count": week_workouts_count,
+        "is_empty_week": week_workouts_count == 0 and week_total_calories == 0,
+        "week_period_start": start_of_week,
+        "week_period_end": end_of_week,
         "workout_statuses": Workout.Status.choices,
-        "user_workouts_for_select": Workout.objects.filter(
-            user=request.user,
-            scheduled_at__date=selected_date,
-            status=Workout.Status.COMPLETED,
-        ),
+        "user_workouts_for_select": completed_on_selected_day,
     }
     return render(request, "workout/dashboard.html", context)
+
+
 @login_required
 @require_POST
 def workout_create_view(request):
-    """Создание новой тренировки с валидацией через WorkoutForm."""
     fallback_date = _parse_selected_date(request.POST.get("date"))
     view_mode = request.POST.get("mode")
     form = WorkoutForm(request.POST)
@@ -221,7 +255,6 @@ def workout_create_view(request):
 @login_required
 @require_POST
 def workout_update_view(request, workout_id: int):
-    """Редактирование названия, даты, времени и заметок тренировки."""
     view_mode = request.POST.get("mode")
 
     with transaction.atomic():
@@ -245,7 +278,6 @@ def workout_update_view(request, workout_id: int):
 @login_required
 @require_POST
 def workout_delete_view(request, workout_id: int):
-    """Удаление тренировки текущего пользователя."""
     view_mode = request.POST.get("mode")
     with transaction.atomic():
         workout = get_object_or_404(
@@ -262,7 +294,6 @@ def workout_delete_view(request, workout_id: int):
 @login_required
 @require_POST
 def workout_toggle_status_view(request, workout_id: int):
-    """Изменение статуса тренировки с проверкой допустимого перехода."""
     new_status = request.POST.get("status")
     view_mode = request.POST.get("mode")
     with transaction.atomic():
@@ -293,7 +324,6 @@ def workout_toggle_status_view(request, workout_id: int):
 @login_required
 @require_POST
 def exercise_create_view(request, workout_id: int):
-    """Добавление упражнения (подходы, повторения, вес) к тренировке через ExerciseForm."""
     workout = _get_user_workout(request.user, workout_id)
     w_date = timezone.localtime(workout.scheduled_at).date()
     view_mode = request.POST.get("mode")
@@ -314,7 +344,6 @@ def exercise_create_view(request, workout_id: int):
 @login_required
 @require_POST
 def exercise_update_view(request, exercise_id: int):
-    """Редактирование упражнения, принадлежащего текущему пользователю."""
     with transaction.atomic():
         exercise = get_object_or_404(
             Exercise.objects.select_related("workout"),
@@ -335,7 +364,6 @@ def exercise_update_view(request, exercise_id: int):
 @login_required
 @require_POST
 def exercise_delete_view(request, exercise_id: int):
-    """Удаление упражнения из тренировки текущего пользователя."""
     exercise = get_object_or_404(Exercise, id=exercise_id, workout__user=request.user)
     w_date = timezone.localtime(exercise.workout.scheduled_at).date()
     view_mode = request.POST.get("mode")
@@ -348,7 +376,6 @@ def exercise_delete_view(request, exercise_id: int):
 @login_required
 @require_POST
 def calorie_create_view(request):
-    """Добавление записи о потраченных калориях (к тренировке или за день)."""
     fallback_date = _parse_selected_date(request.POST.get("date"))
     view_mode = request.POST.get("mode")
 
@@ -361,7 +388,6 @@ def calorie_create_view(request):
     target_date = form.cleaned_data.get("date") or fallback_date
 
     if workout_id:
-        # SQLite has no row-level SELECT FOR UPDATE locks; retry its write contention.
         for attempt in range(5):
             try:
                 with transaction.atomic():
@@ -410,6 +436,9 @@ def calorie_create_view(request):
                     raise
                 sleep(0.05 * (attempt + 1))
     else:
+        if target_date > timezone.localdate():
+            messages.error(request, "Нельзя добавить запись калорий за будущую дату.")
+            return _dashboard_redirect(fallback_date, view_mode)
         entry = form.save(commit=False)
         entry.user = request.user
         entry.workout = None
@@ -423,7 +452,6 @@ def calorie_create_view(request):
 @login_required
 @require_POST
 def calorie_delete_view(request, calorie_id: int):
-    """Удаление записи калорий текущего пользователя."""
     entry = get_object_or_404(DailyCalories, id=calorie_id, user=request.user)
     entry_date = entry.date
     view_mode = request.POST.get("mode")
