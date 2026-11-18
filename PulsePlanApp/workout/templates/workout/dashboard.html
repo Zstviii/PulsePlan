@@ -20,7 +20,9 @@
                 <div class="text-muted small">Расход калорий за {{ selected_date|date:"d.m.Y" }}</div>
                 <div class="fs-4 fw-bold text-danger">{{ selected_day_total_calories }} ккал</div>
                 <div class="small text-secondary mt-1">
-                    Всего за текущую неделю: <strong>{{ week_total_calories }} ккал</strong>
+                    За неделю ({{ week_period_start|date:"d.m.Y" }} — {{ week_period_end|date:"d.m.Y" }}):
+                    <strong>{{ week_total_calories }} ккал</strong>
+                    {% if is_empty_week %}<span class="text-muted">(нет активности)</span>{% endif %}
                 </div>
             </div>
         </div>
@@ -39,9 +41,9 @@
 <div class="card border-0 shadow-sm mb-4">
     <div class="card-header bg-white d-flex flex-wrap justify-content-between align-items-center gap-2 py-3">
         <div class="calendar-navigation d-flex flex-wrap align-items-center gap-2">
-            <a href="?date={{ prev_date|date:'Y-m-d' }}&mode={{ view_mode }}" class="btn btn-outline-secondary btn-sm">← Пред.</a>
+            <a href="?date={{ prev_date|date:'Y-m-d' }}&mode={{ view_mode }}&day={{ anchor_day }}" class="btn btn-outline-secondary btn-sm">← Пред.</a>
             <span class="fw-bold fs-5 mx-2">{{ selected_date|date:"F Y" }}</span>
-            <a href="?date={{ next_date|date:'Y-m-d' }}&mode={{ view_mode }}" class="btn btn-outline-secondary btn-sm">След. →</a>
+            <a href="?date={{ next_date|date:'Y-m-d' }}&mode={{ view_mode }}&day={{ anchor_day }}" class="btn btn-outline-secondary btn-sm">След. →</a>
             <a href="?mode={{ view_mode }}" class="btn btn-link btn-sm text-decoration-none">Сегодня</a>
         </div>
         <div class="calendar-modes btn-group btn-group-sm">
@@ -293,28 +295,32 @@
                 </ul>
 
                 <h6 class="fw-bold mb-2">Добавить расход калорий</h6>
-                <form method="post" action="{% url 'calorie_create' %}" class="row g-2">
-                    {% csrf_token %}
-                    <input type="hidden" name="date" value="{{ selected_date|date:'Y-m-d' }}">
-                    <input type="hidden" name="mode" value="{{ view_mode }}">
-                    <div class="col-sm-5">
-                        <input type="number" name="calories_burned" class="form-control form-control-sm" placeholder="Ккал (напр. 300)" min="1" required>
-                    </div>
-                    <div class="col-sm-7">
-                        <select name="workout_id" class="form-select form-select-sm">
-                            <option value="">— Общая активность за день —</option>
-                            {% for w in user_workouts_for_select %}
-                                <option value="{{ w.id }}">Тренировка: {{ w.title }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div class="col-12">
-                        <input type="text" name="activity_note" class="form-control form-control-sm" placeholder="Комментарий (напр. Прогулка 8000 шагов)">
-                    </div>
-                    <div class="col-12 d-grid">
-                        <button type="submit" class="btn btn-danger btn-sm">Записать калории</button>
-                    </div>
-                </form>
+                {% if is_future_selected %}
+                    <p class="small text-muted mb-0">Нельзя добавить запись калорий за будущую дату ({{ selected_date|date:"d.m.Y" }}).</p>
+                {% else %}
+                    <form method="post" action="{% url 'calorie_create' %}" class="row g-2">
+                        {% csrf_token %}
+                        <input type="hidden" name="date" value="{{ selected_date|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}">
+                        <input type="hidden" name="mode" value="{{ view_mode }}">
+                        <div class="col-sm-5">
+                            <input type="number" name="calories_burned" class="form-control form-control-sm" placeholder="Ккал (напр. 300)" min="1" required>
+                        </div>
+                        <div class="col-sm-7">
+                            <select name="workout_id" class="form-select form-select-sm">
+                                <option value="">— Общая активность за день —</option>
+                                {% for w in user_workouts_for_select %}
+                                    <option value="{{ w.id }}">Тренировка: {{ w.title }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-12">
+                            <input type="text" name="activity_note" class="form-control form-control-sm" placeholder="Комментарий (напр. Прогулка 8000 шагов)">
+                        </div>
+                        <div class="col-12 d-grid">
+                            <button type="submit" class="btn btn-danger btn-sm">Записать калории</button>
+                        </div>
+                    </form>
+                {% endif %}
             </div>
         </div>
     </div>

@@ -1,5 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import date, timedelta
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
@@ -349,3 +349,64 @@ class ParallelWorkoutCalorieTests(TransactionTestCase):
 
         self.assertEqual(responses, [302] * 4)
         self.assertEqual(DailyCalories.objects.filter(workout=workout).count(), 1)
+
+
+class CalendarAndSeedTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="calendar_user", password="Password123!")
+        self.client.force_login(self.user)
+
+    def test_month_navigation_preserves_anchor_day_across_consecutive_months(self):
+        # 31 января -> 28 февраля (с сохранением anchor_day=31) -> 31 марта
+        feb_response = self.client.get(
+            reverse("dashboard"),
+            {"date": "2026-01-31", "mode": "month"},
+        )
+        self.assertEqual(feb_response.context["next_date"], date(2026, 2, 28))
+        self.assertEqual(feb_response.context["anchor_day"], 31)
+
+        mar_response = self.client.get(
+            reverse("dashboard"),
+            {"date": "2026-02-28", "mode": "month", "day": 31},
+        )
+        self.assertEqual(mar_response.context["next_date"], date(2026, 3, 31))
+
+    def test_year_transition_and_leap_year_february(self):
+        jan_response = self.client.get(
+            reverse("dashboard"),
+            {"date": "2026-12-15", "mode": "month"},
+        )
+        self.assertEqual(jan_response.context["next_date"], date(2027, 1, 15))
+
+        leap_response = self.client.get(
+            reverse("dashboard"),
+            {"date": "2024-01-31", "mode": "month"},
+        )
+        self.assertEqual(leap_response.context["next_date"], date(2024, 2, 29))
+
+    def test_invalid_date_query_falls_back_to_today(self):
+        response = self.client.get(
+            reverse("dashboard"),
+            {"date": "not-a-valid-date", "mode": "month"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["selected_date"], timezone.localdate())
+
+    def test_cannot_add_calories_for_future_date(self):
+        future_date = timezone.localdate() + timedelta(days=2)
+        response = self.client.post(
+            reverse("calorie_create"),
+            {"date": future_date.isoformat(), "calories_burned": 250},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(DailyCalories.objects.filter(user=self.user).count(), 0)
+
+    def test_week_period_bounds_and_empty_week_flag(self):
+        response = self.client.get(
+            reverse("dashboard"),
+            {"date": "2020-05-06", "mode": "week"},
+        )
+        self.assertEqual(response.context["week_period_start"], date(2020, 5, 4))
+        self.assertEqual(response.context["week_period_end"], date(2020, 5, 10))
+        self.assertTrue(response.context["is_empty_week"])
+        self.assertEqual(response.context["week_total_calories"], 0)

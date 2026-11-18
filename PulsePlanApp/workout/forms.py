@@ -133,3 +133,10 @@ class DailyCaloriesForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         self.fields["date"].required = False
         self.fields["activity_note"].required = False
+
+    def clean(self):
+        cleaned_data = super().clean()
+        target_date = cleaned_data.get("date")
+        if target_date and target_date > timezone.localdate():
+            raise forms.ValidationError("Нельзя добавить запись калорий за будущую дату.")
+        return cleaned_data

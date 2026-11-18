@@ -155,6 +155,13 @@ class DailyCalories(models.Model):
         verbose_name = "Запись калорий"
         verbose_name_plural = "Записи калорий"
         ordering = ["-date", "-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workout"],
+                condition=models.Q(workout__isnull=False),
+                name="unique_calories_entry_per_workout",
+            )
+        ]
 
     def clean(self):
         super().clean()
@@ -166,6 +173,8 @@ class DailyCalories(models.Model):
             raise ValidationError(
                 {"workout": "Калории можно привязать только к завершённой тренировке."}
             )
+        if self.date and self.date > timezone.localdate():
+            raise ValidationError({"date": "Нельзя добавить запись калорий за будущую дату."})
 
     def save(self, *args, **kwargs):
         if self.workout_id:
