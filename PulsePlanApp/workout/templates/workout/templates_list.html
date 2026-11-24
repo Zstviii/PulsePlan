@@ -1,0 +1,119 @@
+{% extends "workout/base.html" %}
+{% block title %}Шаблоны тренировок — PulsePlan{% endblock %}
+{% block content %}
+
+<section class="dashboard-intro">
+    <div>
+        <p class="eyebrow">БИБЛИОТЕКА</p>
+        <h1 class="page-title">Шаблоны тренировок</h1>
+        <p class="page-subtitle">Создавай готовые программы и добавляй их в календарь в один клик.</p>
+    </div>
+    <a href="{% url 'dashboard' %}" class="btn btn-secondary-action">← В календарь</a>
+</section>
+
+<section class="panel mb-4">
+    <div class="panel-heading">
+        <div>
+            <p class="eyebrow">НОВЫЙ ШАБЛОН</p>
+            <h2 class="section-title">Создать шаблон тренировки</h2>
+        </div>
+    </div>
+    <div class="panel-body">
+        <form method="post" action="{% url 'template_create' %}" class="form-grid create-workout-form">
+            {% csrf_token %}
+            <label class="field-group field-span-full">
+                <span>Название шаблона</span>
+                <input type="text" name="title" class="form-control" placeholder="Например, Фулбоди А или День ног" maxlength="120" required>
+            </label>
+            <label class="field-group field-span-full">
+                <span>Заметки <em>необязательно</em></span>
+                <input type="text" name="notes" class="form-control" placeholder="Рекомендации по разминке и темпу">
+            </label>
+            <div class="field-actions">
+                <button type="submit" class="btn btn-primary-action">Создать шаблон</button>
+            </div>
+        </form>
+    </div>
+</section>
+
+<section class="panel">
+    <div class="panel-heading">
+        <div>
+            <p class="eyebrow">МОИ ШАБЛОНЫ</p>
+            <h2 class="section-title">Сохранённые программы</h2>
+        </div>
+        <span class="day-total-pill">{{ templates|length }} шаблонов</span>
+    </div>
+    <div class="panel-body">
+        {% for tpl in templates %}
+            <article class="workout-card">
+                <div class="workout-card-header">
+                    <div class="workout-heading-main">
+                        <h3 class="workout-title">{{ tpl.title }}</h3>
+                        {% if tpl.notes %}<p class="workout-note">{{ tpl.notes }}</p>{% endif %}
+                    </div>
+                    <div class="workout-tools">
+                        <form method="post" action="{% url 'template_delete' tpl.id %}" class="m-0" onsubmit="return confirm('Удалить шаблон «{{ tpl.title|escapejs }}»?');">
+                            {% csrf_token %}
+                            <button type="submit" class="icon-button icon-button-danger" aria-label="Удалить шаблон">×</button>
+                        </form>
+                    </div>
+                </div>
+
+                <div class="exercise-section">
+                    <div class="subsection-heading"><h4>Упражнения в шаблоне</h4><span>{{ tpl.exercises.count }}</span></div>
+                    <div class="exercise-list">
+                        {% for ex in tpl.exercises.all %}
+                            <div class="exercise-item">
+                                <div class="exercise-info">
+                                    <span class="exercise-index">{{ forloop.counter|stringformat:"02d" }}</span>
+                                    <div>
+                                        <strong>{{ ex.name }}</strong>
+                                        <span class="exercise-specs">{{ ex.sets }} подх. × {{ ex.reps }} повт. · {% if ex.weight_kg > 0 %}{{ ex.weight_kg }} кг{% else %}свой вес{% endif %}</span>
+                                    </div>
+                                </div>
+                                <div class="exercise-tools">
+                                    <form method="post" action="{% url 'template_exercise_delete' ex.id %}" class="m-0">
+                                        {% csrf_token %}
+                                        <button type="submit" class="mini-icon-button mini-icon-danger" aria-label="Удалить {{ ex.name }}">×</button>
+                                    </form>
+                                </div>
+                            </div>
+                        {% empty %}
+                            <p class="empty-inline">В этом шаблоне пока нет упражнений.</p>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <div class="add-exercise-area">
+                    <div class="subsection-heading"><h4>Добавить упражнение в шаблон</h4></div>
+                    <form method="post" action="{% url 'template_exercise_create' tpl.id %}" class="form-grid exercise-create-grid">
+                        {% csrf_token %}
+                        <label class="field-group exercise-name-field"><span>Название упражнения</span><input type="text" name="name" class="form-control" placeholder="Например, Жим гантелей" maxlength="120" required></label>
+                        <label class="field-group"><span>Подходы</span><input type="number" name="sets" class="form-control" value="3" min="1" max="100" required></label>
+                        <label class="field-group"><span>Повторения</span><input type="number" name="reps" class="form-control" value="12" min="1" max="1000" required></label>
+                        <label class="field-group"><span>Вес, кг</span><input type="number" step="0.5" name="weight_kg" class="form-control" value="0" min="0" max="999.9" required></label>
+                        <div class="field-actions"><button type="submit" class="btn btn-secondary-action">Добавить</button></div>
+                    </form>
+                </div>
+
+                <div class="apply-template-bar">
+                    <form method="post" action="{% url 'template_apply' tpl.id %}" class="form-grid apply-template-grid">
+                        {% csrf_token %}
+                        <label class="field-group"><span>Запланировать на дату</span><input type="date" name="date" class="form-control" value="{{ today|date:'Y-m-d' }}" required></label>
+                        <label class="field-group"><span>Время</span><input type="time" name="time" class="form-control" value="18:30" required></label>
+                        <div class="field-actions"><button type="submit" class="btn btn-primary-action">Создать тренировку по шаблону</button></div>
+                    </form>
+                </div>
+            </article>
+        {% empty %}
+            <div class="empty-state">
+                <span class="empty-state-icon" aria-hidden="true">★</span>
+                <h3>Шаблонов пока нет</h3>
+                <p>Создай шаблон выше или нажми ★ на любой тренировке в календаре.</p>
+            </div>
+        {% endfor %}
+    </div>
+</section>
+
+{% endblock %}
