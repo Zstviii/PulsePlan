@@ -1,0 +1,6 @@
+{% extends "workout/base.html" %}
+{% block title %}Результат подхода — PulsePlan{% endblock %}
+{% block content %}
+<div class="row justify-content-center"><div class="col-md-6"><div class="card border-0 shadow-sm"><div class="card-body p-4"><h1 class="h4">{{ exercise.name }}</h1><p class="text-muted">Запишите фактический результат выполненного подхода.</p>
+<form method="post" class="row g-3">{% csrf_token %}<div class="col-4"><label class="form-label">Подход</label>{{ form.set_number }}</div><div class="col-4"><label class="form-label">Повторения</label>{{ form.reps }}</div><div class="col-4"><label class="form-label">Вес, кг</label>{{ form.weight_kg }}</div><div class="col-12 d-flex gap-2"><a href="{% url 'exercise_history' exercise.id %}" class="btn btn-outline-secondary">Отмена</a><button class="btn btn-primary">Сохранить</button></div></form></div></div></div></div>
+{% endblock %}

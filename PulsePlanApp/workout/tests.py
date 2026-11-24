@@ -1,18 +1,16 @@
 import os
-from unittest.mock import patch
-from django.core.management.base import CommandError
-from django.test import override_settings
-from seed_pulseplan import DEMO_USERNAME, run_seed
-
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, time, timedelta
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from django.core.management.base import CommandError
 from django.db import close_old_connections
-from django.test import Client, TestCase, TransactionTestCase
+from django.test import Client, TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
+from seed_pulseplan import DEMO_USERNAME, run_seed
 
 from .forms import DailyCaloriesForm, ExerciseForm, WorkoutForm
 from .models import DailyCalories, Exercise, Workout
@@ -80,7 +78,9 @@ class WorkoutOwnershipTests(TestCase):
         self.alice_workout.refresh_from_db()
         calorie.refresh_from_db()
         self.assertEqual(self.alice_workout.title, "Измененная тренировка")
-        self.assertEqual(timezone.localtime(self.alice_workout.scheduled_at).date(), target_date)
+        self.assertEqual(
+            timezone.localtime(self.alice_workout.scheduled_at).date(), target_date
+        )
         self.assertEqual(calorie.date, target_date)
         self.assertEqual(calorie.calories_burned, 300)
         self.assertEqual(Workout.objects.count(), 1)
@@ -168,7 +168,9 @@ class WorkoutOwnershipTests(TestCase):
             {"calories_burned": 300, "workout_id": self.alice_workout.id},
         )
 
-        self.assertFalse(DailyCalories.objects.filter(workout=self.alice_workout).exists())
+        self.assertFalse(
+            DailyCalories.objects.filter(workout=self.alice_workout).exists()
+        )
 
     def test_status_transitions_are_limited_and_repeated_completion_is_safe(self):
         self.client.force_login(self.alice)
@@ -213,6 +215,7 @@ class WorkoutOwnershipTests(TestCase):
         )
 
         self.assertEqual(response.context["selected_day_total_calories"], 50)
+
     def test_deleting_completed_workout_removes_linked_calories_and_exercises(self):
         self.client.force_login(self.alice)
         self.alice_workout.status = Workout.Status.COMPLETED
@@ -267,7 +270,9 @@ class WorkoutOwnershipTests(TestCase):
 
         self.assertEqual(hidden_total, 0)
         self.assertEqual(restored_total, 300)
-        self.assertEqual(DailyCalories.objects.filter(workout=self.alice_workout).count(), 1)
+        self.assertEqual(
+            DailyCalories.objects.filter(workout=self.alice_workout).count(), 1
+        )
 
     def test_owner_can_edit_existing_exercise_without_creating_another(self):
         self.client.force_login(self.alice)
@@ -304,9 +309,7 @@ class WorkoutOwnershipTests(TestCase):
         exercise = self.alice_workout.exercises.create(name="Присед")
         self.client.force_login(self.alice)
 
-        response = self.client.post(
-            reverse("exercise_delete", args=[exercise.id])
-        )
+        response = self.client.post(reverse("exercise_delete", args=[exercise.id]))
 
         self.assertEqual(response.status_code, 302)
         self.assertFalse(Exercise.objects.filter(pk=exercise.pk).exists())
@@ -359,7 +362,9 @@ class ParallelWorkoutCalorieTests(TransactionTestCase):
 
 class CalendarAndSeedTests(TestCase):
     def setUp(self):
-        self.user = User.objects.create_user(username="calendar_user", password="Password123!")
+        self.user = User.objects.create_user(
+            username="calendar_user", password="Password123!"
+        )
         self.client.force_login(self.user)
 
     def test_month_navigation_preserves_anchor_day_across_consecutive_months(self):
@@ -415,6 +420,8 @@ class CalendarAndSeedTests(TestCase):
         self.assertEqual(response.context["week_period_end"], date(2020, 5, 10))
         self.assertTrue(response.context["is_empty_week"])
         self.assertEqual(response.context["week_total_calories"], 0)
+
+
 class AuthAndDashboardTests(TestCase):
     def setUp(self):
         self.user_data = {
@@ -454,7 +461,9 @@ class AuthAndDashboardTests(TestCase):
 
 class WorkoutFunctionalityTests(TestCase):
     def setUp(self):
-        self.user = User.objects.create_user(username="athlete", password="Password123!")
+        self.user = User.objects.create_user(
+            username="athlete", password="Password123!"
+        )
         self.client.force_login(self.user)
         self.workout = Workout.objects.create(
             user=self.user,
@@ -533,7 +542,9 @@ class WorkoutFunctionalityTests(TestCase):
 class MidnightWorkoutTests(TestCase):
 
     def setUp(self):
-        self.user = User.objects.create_user(username="midnight_user", password="Password123!")
+        self.user = User.objects.create_user(
+            username="midnight_user", password="Password123!"
+        )
         self.client.force_login(self.user)
         self.tz = timezone.get_current_timezone()
 
@@ -544,25 +555,41 @@ class MidnightWorkoutTests(TestCase):
         late_workout = Workout.objects.create(
             user=self.user,
             title="Поздняя тренировка",
-            scheduled_at=timezone.make_aware(datetime.combine(day_one, time(23, 59)), self.tz),
+            scheduled_at=timezone.make_aware(
+                datetime.combine(day_one, time(23, 59)), self.tz
+            ),
             status=Workout.Status.COMPLETED,
         )
         early_workout = Workout.objects.create(
             user=self.user,
             title="Ночная тренировка",
-            scheduled_at=timezone.make_aware(datetime.combine(day_two, time(0, 0)), self.tz),
+            scheduled_at=timezone.make_aware(
+                datetime.combine(day_two, time(0, 0)), self.tz
+            ),
             status=Workout.Status.COMPLETED,
         )
 
-        DailyCalories.objects.create(user=self.user, workout=late_workout, calories_burned=250)
-        DailyCalories.objects.create(user=self.user, workout=early_workout, calories_burned=400)
+        DailyCalories.objects.create(
+            user=self.user, workout=late_workout, calories_burned=250
+        )
+        DailyCalories.objects.create(
+            user=self.user, workout=early_workout, calories_burned=400
+        )
 
-        resp_day_one = self.client.get(reverse("dashboard"), {"date": day_one.isoformat()})
-        self.assertEqual(list(resp_day_one.context["selected_day_workouts"]), [late_workout])
+        resp_day_one = self.client.get(
+            reverse("dashboard"), {"date": day_one.isoformat()}
+        )
+        self.assertEqual(
+            list(resp_day_one.context["selected_day_workouts"]), [late_workout]
+        )
         self.assertEqual(resp_day_one.context["selected_day_total_calories"], 250)
 
-        resp_day_two = self.client.get(reverse("dashboard"), {"date": day_two.isoformat()})
-        self.assertEqual(list(resp_day_two.context["selected_day_workouts"]), [early_workout])
+        resp_day_two = self.client.get(
+            reverse("dashboard"), {"date": day_two.isoformat()}
+        )
+        self.assertEqual(
+            list(resp_day_two.context["selected_day_workouts"]), [early_workout]
+        )
         self.assertEqual(resp_day_two.context["selected_day_total_calories"], 400)
 
     def test_midnight_workouts_on_month_boundary(self):
@@ -572,12 +599,16 @@ class MidnightWorkoutTests(TestCase):
         w_oct = Workout.objects.create(
             user=self.user,
             title="Конец октября",
-            scheduled_at=timezone.make_aware(datetime.combine(end_of_month, time(23, 59, 59)), self.tz),
+            scheduled_at=timezone.make_aware(
+                datetime.combine(end_of_month, time(23, 59, 59)), self.tz
+            ),
         )
         w_nov = Workout.objects.create(
             user=self.user,
             title="Начало ноября",
-            scheduled_at=timezone.make_aware(datetime.combine(start_of_next, time(0, 0, 0)), self.tz),
+            scheduled_at=timezone.make_aware(
+                datetime.combine(start_of_next, time(0, 0, 0)), self.tz
+            ),
         )
 
         resp_oct = self.client.get(
@@ -594,10 +625,14 @@ class MidnightWorkoutTests(TestCase):
 class ExtendedFormTests(TestCase):
 
     def setUp(self):
-        self.user = User.objects.create_user(username="form_user", password="Password123!")
+        self.user = User.objects.create_user(
+            username="form_user", password="Password123!"
+        )
 
     def test_workout_form_defaults_and_whitespace_trimming(self):
-        form = WorkoutForm(data={"title": "  Вечернее кардио  ", "notes": "Лёгкий темп"})
+        form = WorkoutForm(
+            data={"title": "  Вечернее кардио  ", "notes": "Лёгкий темп"}
+        )
         self.assertTrue(form.is_valid())
         workout = form.save(user=self.user)
 
@@ -628,7 +663,9 @@ class ExtendedFormTests(TestCase):
         self.assertTrue(form.is_valid())
         updated = form.save()
 
-        self.assertEqual(timezone.localtime(updated.scheduled_at), timezone.localtime(original_dt))
+        self.assertEqual(
+            timezone.localtime(updated.scheduled_at), timezone.localtime(original_dt)
+        )
 
     def test_exercise_form_defaults_and_boundaries(self):
         form_defaults = ExerciseForm(data={"name": "  Отжимания  "})
@@ -681,7 +718,9 @@ class ExtendedFormTests(TestCase):
     class WorkoutStatusTransitionTests(TestCase):
 
         def setUp(self):
-            self.user = User.objects.create_user(username="status_user", password="Password123!")
+            self.user = User.objects.create_user(
+                username="status_user", password="Password123!"
+            )
             self.client.force_login(self.user)
             self.workout = Workout.objects.create(
                 user=self.user,
@@ -725,8 +764,12 @@ class ExtendedFormTests(TestCase):
     class ForeignDataAccessTests(TestCase):
 
         def setUp(self):
-            self.owner = User.objects.create_user(username="owner", password="Password123!")
-            self.intruder = User.objects.create_user(username="intruder", password="Password123!")
+            self.owner = User.objects.create_user(
+                username="owner", password="Password123!"
+            )
+            self.intruder = User.objects.create_user(
+                username="intruder", password="Password123!"
+            )
             self.today = timezone.localdate()
 
             self.owner_workout = Workout.objects.create(
@@ -742,7 +785,9 @@ class ExtendedFormTests(TestCase):
 
         def test_intruder_cannot_see_owner_workouts_or_calories_on_dashboard(self):
             self.client.force_login(self.intruder)
-            response = self.client.get(reverse("dashboard"), {"date": self.today.isoformat()})
+            response = self.client.get(
+                reverse("dashboard"), {"date": self.today.isoformat()}
+            )
 
             self.assertEqual(response.status_code, 200)
             self.assertEqual(list(response.context["selected_day_workouts"]), [])
@@ -756,7 +801,9 @@ class ExtendedFormTests(TestCase):
                 reverse("calorie_delete", args=[self.owner_calorie.id])
             )
             self.assertEqual(response.status_code, 404)
-            self.assertTrue(DailyCalories.objects.filter(pk=self.owner_calorie.pk).exists())
+            self.assertTrue(
+                DailyCalories.objects.filter(pk=self.owner_calorie.pk).exists()
+            )
 
         def test_intruder_cannot_link_calories_to_completed_foreign_workout(self):
             self.client.force_login(self.intruder)
@@ -765,7 +812,9 @@ class ExtendedFormTests(TestCase):
                 {"calories_burned": 200, "workout_id": self.owner_workout.id},
             )
             self.assertEqual(response.status_code, 404)
-            self.assertEqual(DailyCalories.objects.filter(user=self.intruder).count(), 0)
+            self.assertEqual(
+                DailyCalories.objects.filter(user=self.intruder).count(), 0
+            )
 
             foreign_entry = DailyCalories(
                 user=self.intruder,
@@ -777,18 +826,26 @@ class ExtendedFormTests(TestCase):
 
     class StatisticsPeriodBoundaryTests(TestCase):
         def setUp(self):
-            self.user = User.objects.create_user(username="stats_user", password="Password123!")
+            self.user = User.objects.create_user(
+                username="stats_user", password="Password123!"
+            )
             self.client.force_login(self.user)
             self.tz = timezone.get_current_timezone()
 
-        def _create_completed_workout_with_calories(self, target_date: date, hour: int, kcal: int):
+        def _create_completed_workout_with_calories(
+            self, target_date: date, hour: int, kcal: int
+        ):
             w = Workout.objects.create(
                 user=self.user,
                 title=f"Тренировка {target_date}",
-                scheduled_at=timezone.make_aware(datetime.combine(target_date, time(hour, 0)), self.tz),
+                scheduled_at=timezone.make_aware(
+                    datetime.combine(target_date, time(hour, 0)), self.tz
+                ),
                 status=Workout.Status.COMPLETED,
             )
-            DailyCalories.objects.create(user=self.user, workout=w, calories_burned=kcal)
+            DailyCalories.objects.create(
+                user=self.user, workout=w, calories_burned=kcal
+            )
             return w
 
         def test_week_statistics_include_exact_bounds_and_exclude_adjacent_days(self):
@@ -833,10 +890,13 @@ class ExtendedFormTests(TestCase):
             self.assertEqual(first_cell["total_calories"], 150)
             self.assertEqual(response.context["selected_day_total_calories"], 300)
 
+
 class CalendarTransitionsAndLabelsTests(TestCase):
 
     def setUp(self):
-        self.user = User.objects.create_user(username="cal_detail_user", password="Password123!")
+        self.user = User.objects.create_user(
+            username="cal_detail_user", password="Password123!"
+        )
         self.client.force_login(self.user)
 
     def test_calendar_transitions_week_and_month_30_31_days(self):
@@ -877,7 +937,9 @@ class CalendarTransitionsAndLabelsTests(TestCase):
         cross_year_week = self.client.get(
             reverse("dashboard"), {"date": "2026-12-31", "mode": "week"}
         )
-        self.assertEqual(cross_year_week.context["week_period_start"], date(2026, 12, 28))
+        self.assertEqual(
+            cross_year_week.context["week_period_start"], date(2026, 12, 28)
+        )
         self.assertEqual(cross_year_week.context["week_period_end"], date(2027, 1, 3))
 
     def test_statistics_label_matches_actual_week_period(self):
@@ -914,6 +976,7 @@ class CalendarTransitionsAndLabelsTests(TestCase):
         self.assertEqual(post_resp.status_code, 302)
         self.assertEqual(DailyCalories.objects.filter(user=self.user).count(), 0)
 
+
 class SeedScriptSafetyTests(TestCase):
 
     def setUp(self):
@@ -947,8 +1010,12 @@ class SeedScriptSafetyTests(TestCase):
 
         self.assertEqual(User.objects.filter(username=DEMO_USERNAME).count(), 1)
         self.assertEqual(Workout.objects.filter(user=demo_user).count(), workouts_count)
-        self.assertEqual(Exercise.objects.filter(workout__user=demo_user).count(), exercises_count)
-        self.assertEqual(DailyCalories.objects.filter(user=demo_user).count(), calories_count)
+        self.assertEqual(
+            Exercise.objects.filter(workout__user=demo_user).count(), exercises_count
+        )
+        self.assertEqual(
+            DailyCalories.objects.filter(user=demo_user).count(), calories_count
+        )
 
     @override_settings(DEBUG=True)
     @patch.dict(os.environ, {"PULSEPLAN_DEMO_PASSWORD": "DemoPassword123!"})
@@ -966,7 +1033,9 @@ class SeedScriptSafetyTests(TestCase):
         self.assertEqual(Workout.objects.filter(user=demo_user).count(), 3)
 
         self.assertTrue(Workout.objects.filter(pk=self.regular_workout.pk).exists())
-        self.assertTrue(DailyCalories.objects.filter(pk=self.regular_calorie.pk).exists())
+        self.assertTrue(
+            DailyCalories.objects.filter(pk=self.regular_calorie.pk).exists()
+        )
 
         demo_user.is_staff = True
         demo_user.save(update_fields=["is_staff"])
@@ -991,12 +1060,88 @@ class SeedScriptSafetyTests(TestCase):
         with patch(
             "seed_pulseplan._create_validated_exercises",
             side_effect=RuntimeError("Искусственный сбой при заполнении"),
-        ):
-            with self.assertRaises(RuntimeError):
-                run_seed(reset=True)
+        ), self.assertRaises(RuntimeError):
+            run_seed(reset=True)
 
         current_workout_ids = set(
             Workout.objects.filter(user=demo_user).values_list("id", flat=True)
         )
         self.assertEqual(current_workout_ids, initial_workout_ids)
         self.assertTrue(Workout.objects.filter(pk=custom_workout.pk).exists())
+
+
+class StatisticsLabelsPeriodMatchTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="label_stats_user", password="Password123!"
+        )
+        self.client.force_login(self.user)
+        self.tz = timezone.get_current_timezone()
+
+    def _add_completed_workout_calories(self, target_date: date, kcal: int):
+        workout = Workout.objects.create(
+            user=self.user,
+            title=f"Тренировка {target_date.isoformat()}",
+            scheduled_at=timezone.make_aware(
+                datetime.combine(target_date, time(12, 0)), self.tz
+            ),
+            status=Workout.Status.COMPLETED,
+        )
+        DailyCalories.objects.create(
+            user=self.user, workout=workout, calories_burned=kcal
+        )
+
+    def test_statistics_labels_across_month_and_year_boundaries(self):
+        cases = [
+            (date(2026, 12, 2), "02.12.2026", "30.11.2026 — 06.12.2026"),
+            (date(2027, 1, 1), "01.01.2027", "28.12.2026 — 03.01.2027"),
+            (date(2024, 2, 29), "29.02.2024", "26.02.2024 — 03.03.2024"),
+        ]
+
+        for selected, day_label, week_label in cases:
+            with self.subTest(selected=selected):
+                response = self.client.get(
+                    reverse("dashboard"),
+                    {"date": selected.isoformat(), "mode": "week"},
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(response, f"Расход калорий за {day_label}")
+                self.assertContains(response, f"Тренировки на {day_label}")
+                self.assertContains(response, f"За неделю ({week_label}):")
+
+    def test_week_label_in_month_mode_reflects_actual_week_not_month_grid(self):
+        selected = date(2026, 11, 12)
+        self._add_completed_workout_calories(date(2026, 10, 26), 500)
+        self._add_completed_workout_calories(date(2026, 11, 9), 200)
+        self._add_completed_workout_calories(date(2026, 11, 15), 300)
+
+        response = self.client.get(
+            reverse("dashboard"),
+            {"date": selected.isoformat(), "mode": "month"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["week_period_start"], date(2026, 11, 9))
+        self.assertEqual(response.context["week_period_end"], date(2026, 11, 15))
+        self.assertEqual(response.context["week_total_calories"], 500)
+        self.assertContains(response, "За неделю (09.11.2026 — 15.11.2026):")
+        self.assertContains(response, "<strong>500 ккал</strong>", html=True)
+
+    def test_statistics_label_updates_when_navigating_prev_and_next_week(self):
+        base_date = date(2026, 10, 14)
+        self._add_completed_workout_calories(date(2026, 10, 7), 150)
+        self._add_completed_workout_calories(date(2026, 10, 21), 450)
+
+        initial = self.client.get(
+            reverse("dashboard"), {"date": base_date.isoformat(), "mode": "week"}
+        )
+        prev_url = f"{reverse('dashboard')}?date={initial.context['prev_date'].isoformat()}&mode=week"
+        next_url = f"{reverse('dashboard')}?date={initial.context['next_date'].isoformat()}&mode=week"
+
+        prev_resp = self.client.get(prev_url)
+        self.assertContains(prev_resp, "За неделю (05.10.2026 — 11.10.2026):")
+        self.assertContains(prev_resp, "<strong>150 ккал</strong>", html=True)
+
+        next_resp = self.client.get(next_url)
+        self.assertContains(next_resp, "За неделю (19.10.2026 — 25.10.2026):")
+        self.assertContains(next_resp, "<strong>450 ккал</strong>", html=True)
