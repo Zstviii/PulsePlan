@@ -1,0 +1,22 @@
+{% extends "workout/base.html" %}
+{% block title %}{% if template_obj %}Редактирование{% else %}Создание{% endif %} шаблона — PulsePlan{% endblock %}
+{% block content %}
+<div class="row justify-content-center"><div class="col-xl-9">
+<div class="d-flex justify-content-between align-items-center mb-3"><div><h1 class="h3 mb-1">{% if template_obj %}Редактирование шаблона{% else %}Создание шаблона{% endif %}</h1><p class="text-muted mb-0">Соберите тренировку, которую можно будет использовать повторно.</p></div><a href="{% url 'template_list' %}" class="btn btn-outline-secondary">Назад</a></div>
+<div class="card border-0 shadow-sm mb-4"><div class="card-body">
+<form method="post" class="row g-3">{% csrf_token %}
+<div class="col-md-8"><label class="form-label">Название</label>{{ form.name }}{% for e in form.name.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div>
+<div class="col-md-4"><label class="form-label">Описание</label>{{ form.notes }}</div>
+<div class="col-12"><button class="btn btn-primary">{% if template_obj %}Сохранить изменения{% else %}Создать шаблон{% endif %}</button></div>
+</form></div></div>
+{% if template_obj %}
+<div class="card border-0 shadow-sm"><div class="card-header bg-white fw-bold">Упражнения</div><div class="card-body">
+{% for ex in template_obj.exercises.all %}<div class="border rounded p-3 mb-2 d-flex flex-wrap justify-content-between align-items-center gap-2"><div><strong>{{ ex.name }}</strong><div class="small text-muted">{{ ex.sets }} подхода × {{ ex.reps }} повторений{% if ex.weight_kg > 0 %} × {{ ex.weight_kg }} кг{% endif %}</div></div><form method="post" action="{% url 'template_exercise_delete' ex.id %}" data-delete-title="{{ ex.name }}">{% csrf_token %}<button class="btn btn-outline-danger btn-sm">Удалить</button></form></div>{% empty %}<p class="text-muted">Добавьте первое упражнение.</p>{% endfor %}
+<hr><h2 class="h6">Добавить упражнение</h2>
+<form method="post" action="{% url 'template_exercise_add' template_obj.id %}" class="row g-2">{% csrf_token %}
+<div class="col-12 col-md-5"><input name="name" class="form-control" placeholder="Жим лёжа" required></div><div class="col-4 col-md-2"><input name="sets" type="number" min="1" value="3" class="form-control" placeholder="Подходы"></div><div class="col-4 col-md-2"><input name="reps" type="number" min="1" value="10" class="form-control" placeholder="Повторения"></div><div class="col-4 col-md-2"><input name="weight_kg" type="number" min="0" step="0.5" value="0" class="form-control" placeholder="Вес"></div><div class="col-12 col-md-1 d-grid"><button class="btn btn-outline-primary">+</button></div></form>
+<div class="mt-4"><a href="{% url 'template_use' template_obj.id %}" class="btn btn-primary">Использовать шаблон</a></div>
+</div></div>
+{% endif %}
+</div></div>
+{% endblock %}

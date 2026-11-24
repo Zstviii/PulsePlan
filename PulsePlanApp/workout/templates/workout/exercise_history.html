@@ -1,0 +1,8 @@
+{% extends "workout/base.html" %}
+{% block title %}История — {{ exercise.name }}{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3"><div><h1 class="h3 mb-1">История: {{ exercise.name }}</h1><p class="text-muted mb-0">Фактически сохранённые результаты подходов.</p></div><div class="d-flex gap-2"><a href="{% url 'exercise_result_add' exercise.id %}" class="btn btn-primary">+ Записать подход</a><a href="{% url 'dashboard' %}" class="btn btn-outline-secondary">Назад</a></div></div>
+<div class="card border-0 shadow-sm"><div class="table-responsive"><table class="table align-middle mb-0"><thead class="table-light"><tr><th>Дата</th><th>Тренировка</th><th>Подход</th><th>Повторения</th><th>Вес</th></tr></thead><tbody>
+{% for result in results %}<tr><td>{{ result.performed_at|date:"d.m.Y" }}</td><td>{{ result.workout.title }}</td><td>{{ result.set_number }}</td><td>{{ result.reps }}</td><td>{% if result.weight_kg > 0 %}{{ result.weight_kg }} кг{% else %}Свой вес{% endif %}</td></tr>{% empty %}<tr><td colspan="5" class="text-center text-muted py-5">История пока пуста. Сохраните первый результат подхода.</td></tr>{% endfor %}
+</tbody></table></div></div>
+{% endblock %}
