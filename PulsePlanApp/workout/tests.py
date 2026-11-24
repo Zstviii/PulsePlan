@@ -1000,3 +1000,80 @@ class SeedScriptSafetyTests(TestCase):
         )
         self.assertEqual(current_workout_ids, initial_workout_ids)
         self.assertTrue(Workout.objects.filter(pk=custom_workout.pk).exists())
+
+class StatisticsLabelsPeriodMatchTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="label_stats_user", password="Password123!"
+        )
+        self.client.force_login(self.user)
+        self.tz = timezone.get_current_timezone()
+
+    def _add_completed_workout_calories(self, target_date: date, kcal: int):
+        workout = Workout.objects.create(
+            user=self.user,
+            title=f"Тренировка {target_date.isoformat()}",
+            scheduled_at=timezone.make_aware(
+                datetime.combine(target_date, time(12, 0)), self.tz
+            ),
+            status=Workout.Status.COMPLETED,
+        )
+        DailyCalories.objects.create(
+            user=self.user, workout=workout, calories_burned=kcal
+        )
+
+    def test_statistics_labels_across_month_and_year_boundaries(self):
+        cases = [
+            (date(2026, 12, 2), "02.12.2026", "30.11.2026 — 06.12.2026"),
+            (date(2027, 1, 1), "01.01.2027", "28.12.2026 — 03.01.2027"),
+            (date(2024, 2, 29), "29.02.2024", "26.02.2024 — 03.03.2024"),
+        ]
+
+        for selected, day_label, week_label in cases:
+            with self.subTest(selected=selected):
+                response = self.client.get(
+                    reverse("dashboard"),
+                    {"date": selected.isoformat(), "mode": "week"},
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(response, f"Расход калорий за {day_label}")
+                self.assertContains(response, f"Тренировки на {day_label}")
+                self.assertContains(response, f"За неделю ({week_label}):")
+
+    def test_week_label_in_month_mode_reflects_actual_week_not_month_grid(self):
+        selected = date(2026, 11, 12)
+        self._add_completed_workout_calories(date(2026, 10, 26), 500)
+        self._add_completed_workout_calories(date(2026, 11, 9), 200)
+        self._add_completed_workout_calories(date(2026, 11, 15), 300)
+
+        response = self.client.get(
+            reverse("dashboard"),
+            {"date": selected.isoformat(), "mode": "month"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["week_period_start"], date(2026, 11, 9))
+        self.assertEqual(response.context["week_period_end"], date(2026, 11, 15))
+        self.assertEqual(response.context["week_total_calories"], 500)
+        self.assertContains(response, "За неделю (09.11.2026 — 15.11.2026):")
+        self.assertContains(response, "<strong>500 ккал</strong>", html=True)
+
+    def test_statistics_label_updates_when_navigating_prev_and_next_week(self):
+        base_date = date(2026, 10, 14)
+        self._add_completed_workout_calories(date(2026, 10, 7), 150)
+        self._add_completed_workout_calories(date(2026, 10, 21), 450)
+
+        initial = self.client.get(
+            reverse("dashboard"), {"date": base_date.isoformat(), "mode": "week"}
+        )
+        prev_url = f"{reverse('dashboard')}?date={initial.context['prev_date'].isoformat()}&mode=week"
+        next_url = f"{reverse('dashboard')}?date={initial.context['next_date'].isoformat()}&mode=week"
+
+        prev_resp = self.client.get(prev_url)
+        self.assertContains(prev_resp, "За неделю (05.10.2026 — 11.10.2026):")
+        self.assertContains(prev_resp, "<strong>150 ккал</strong>", html=True)
+
+        next_resp = self.client.get(next_url)
+        self.assertContains(next_resp, "За неделю (19.10.2026 — 25.10.2026):")
+        self.assertContains(next_resp, "<strong>450 ккал</strong>", html=True)
+
