@@ -170,6 +170,19 @@ class TemplateExerciseForm(forms.ModelForm):
         }
 
 
+class TemplateUseForm(forms.Form):
+    date = forms.DateField(
+        input_formats=["%Y-%m-%d"],
+        widget=forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+        error_messages={"invalid": "Некорректная дата."},
+    )
+    time = forms.TimeField(
+        input_formats=["%H:%M", "%H:%M:%S"],
+        widget=forms.TimeInput(attrs={"type": "time", "class": "form-control"}),
+        error_messages={"invalid": "Некорректное время."},
+    )
+
+
 class ExerciseResultForm(forms.ModelForm):
     class Meta:
         model = ExerciseResult
@@ -179,3 +192,40 @@ class ExerciseResultForm(forms.ModelForm):
             "reps": forms.NumberInput(attrs={"class": "form-control", "min": 1}),
             "weight_kg": forms.NumberInput(attrs={"class": "form-control", "min": 0, "step": "0.5"}),
         }
+
+
+class SafeDataDeleteForm(forms.Form):
+    SCOPE_DATA_ONLY = "data_only"
+    SCOPE_FULL_ACCOUNT = "full_account"
+    CONFIRMATION_PHRASE = "УДАЛИТЬ"
+    SCOPE_CHOICES = [
+        (SCOPE_DATA_ONLY, "Удалить тренировки, подходы, шаблоны и калории"),
+        (SCOPE_FULL_ACCOUNT, "Удалить аккаунт и все связанные данные"),
+    ]
+
+    scope = forms.ChoiceField(choices=SCOPE_CHOICES, initial=SCOPE_DATA_ONLY)
+    password = forms.CharField(
+        widget=forms.PasswordInput,
+        error_messages={"required": "Введите текущий пароль для подтверждения."},
+    )
+    confirmation = forms.CharField(
+        error_messages={"required": "Введите слово подтверждения УДАЛИТЬ."},
+    )
+
+    def __init__(self, user, *args, **kwargs):
+        self.user = user
+        super().__init__(*args, **kwargs)
+
+    def clean_password(self):
+        password = self.cleaned_data.get("password") or ""
+        if not self.user.check_password(password):
+            raise forms.ValidationError("Неверный текущий пароль.")
+        return password
+
+    def clean_confirmation(self):
+        confirmation = (self.cleaned_data.get("confirmation") or "").strip()
+        if confirmation != self.CONFIRMATION_PHRASE:
+            raise forms.ValidationError(
+                f"Для подтверждения введите точное слово: {self.CONFIRMATION_PHRASE}."
+            )
+        return confirmation

@@ -2,76 +2,74 @@
 {% block title %}Календарь и кабинет — PulsePlan{% endblock %}
 {% block content %}
 
-<div class="row g-3 mb-4">
-    <div class="col-md-4">
-        <div class="card border-0 shadow-sm h-100">
-            <div class="card-body">
-                <div class="text-muted small">Выбранная дата</div>
-                <div class="fs-4 fw-bold">{{ selected_date|date:"d.m.Y (l)" }}</div>
-                <div class="small text-secondary mt-1">
-                    Тренировок за день: <strong>{{ selected_day_workouts|length }}</strong>
-                </div>
-            </div>
-        </div>
+<section class="dashboard-intro">
+    <div>
+        <p class="eyebrow">Личный кабинет</p>
+        <h1 class="page-title">Календарь тренировок</h1>
+        <p class="page-subtitle">Планируйте занятия и отслеживайте прогресс.</p>
     </div>
-    <div class="col-md-4">
-        <div class="card border-0 shadow-sm h-100">
-            <div class="card-body">
-                <div class="text-muted small">Расход калорий за {{ selected_date|date:"d.m.Y" }}</div>
-                <div class="fs-4 fw-bold text-danger">{{ selected_day_total_calories }} ккал</div>
-                <div class="small text-secondary mt-1">
-                    За неделю ({{ week_period_start|date:"d.m.Y" }} — {{ week_period_end|date:"d.m.Y" }}):
-                    <strong>{{ week_total_calories }} ккал</strong>
-                    {% if is_empty_week %}<span class="text-muted">(нет активности)</span>{% endif %}
-                </div>
-            </div>
-        </div>
+    <div class="intro-date">
+        <span class="intro-date-label">Сегодня</span>
+        <strong>{{ today|date:"d.m.Y" }}</strong>
     </div>
-    <div class="col-md-4">
-        <div class="card border-0 shadow-sm h-100">
-            <div class="card-body">
-                <div class="text-muted small">Прогресс профиля ({{ user.username }})</div>
-                <div class="fs-4 fw-bold text-success">{{ total_completed_workouts }} выполнено</div>
-                <div class="small text-secondary mt-1">Завершённых тренировок за всё время</div>
-            </div>
+</section>
+
+<div class="stats-grid">
+    <article class="stat-card">
+        <div class="stat-topline">
+            <span class="stat-label">Выбранная дата</span>
+            <span class="stat-icon">К</span>
         </div>
-    </div>
+        <div class="stat-value stat-value-date">{{ selected_date|date:"d.m.Y" }}</div>
+        <div class="stat-footnote"><strong>{{ selected_day_workouts|length }}</strong> тренировок за день</div>
+    </article>
+    <article class="stat-card stat-card-featured">
+        <div class="stat-topline">
+            <span class="stat-label">Расход калорий за {{ selected_date|date:"d.m.Y" }}</span>
+            <span class="stat-icon">ккал</span>
+        </div>
+        <div class="stat-value">{{ selected_day_total_calories }} <span>ккал</span></div>
+        <div class="stat-footnote">За неделю ({{ week_period_start|date:"d.m.Y" }} — {{ week_period_end|date:"d.m.Y" }}): <strong>{{ week_total_calories }} ккал</strong>{% if is_empty_week %} (нет активности){% endif %}</div>
+    </article>
+    <article class="stat-card">
+        <div class="stat-topline">
+            <span class="stat-label">Прогресс профиля</span>
+            <span class="stat-icon">✓</span>
+        </div>
+        <div class="stat-value">{{ total_completed_workouts }} <span>выполнено</span></div>
+        <div class="stat-footnote">Завершённых тренировок за всё время</div>
+    </article>
 </div>
 
-<div class="card border-0 shadow-sm mb-4">
-    <div class="card-header bg-white d-flex flex-wrap justify-content-between align-items-center gap-2 py-3">
-        <div class="calendar-navigation d-flex flex-wrap align-items-center gap-2">
-            <a href="?date={{ prev_date|date:'Y-m-d' }}&mode={{ view_mode }}&day={{ anchor_day }}" class="btn btn-outline-secondary btn-sm">← Пред.</a>
-            <span class="fw-bold fs-5 mx-2">
+<section class="panel calendar-panel">
+    <div class="panel-heading calendar-heading">
+        <div class="calendar-title-wrap">
+            <p class="eyebrow">Расписание</p>
+            <h2 class="section-title">
                 {% if view_mode == 'week' %}
                     {{ week_period_start|date:"d.m.Y" }} — {{ week_period_end|date:"d.m.Y" }}
                 {% else %}
                     {{ selected_date|date:"F Y" }}
                 {% endif %}
-            </span>
-            <a href="?date={{ next_date|date:'Y-m-d' }}&mode={{ view_mode }}&day={{ anchor_day }}" class="btn btn-outline-secondary btn-sm">След. →</a>
-            <a href="?date={{ today|date:'Y-m-d' }}&mode={{ view_mode }}&day={{ today|date:'j' }}" class="btn btn-link btn-sm text-decoration-none">Сегодня</a>
+            </h2>
         </div>
-        <div class="calendar-modes btn-group btn-group-sm">
-            <a href="?date={{ selected_date|date:'Y-m-d' }}&mode=week&day={{ anchor_day }}"
-               class="btn {% if view_mode == 'week' %}btn-primary{% else %}btn-outline-primary{% endif %}">Неделя</a>
-            <a href="?date={{ selected_date|date:'Y-m-d' }}&mode=month&day={{ anchor_day }}"
-               class="btn {% if view_mode == 'month' %}btn-primary{% else %}btn-outline-primary{% endif %}">Месяц</a>
+        <div class="calendar-controls">
+            <div class="calendar-navigation">
+                <a href="?date={{ prev_date|date:'Y-m-d' }}&mode={{ view_mode }}&day={{ anchor_day }}" class="calendar-arrow" aria-label="Предыдущий период">←</a>
+                <span class="calendar-period">{{ selected_date|date:"F Y" }}</span>
+                <a href="?date={{ next_date|date:'Y-m-d' }}&mode={{ view_mode }}&day={{ anchor_day }}" class="calendar-arrow" aria-label="Следующий период">→</a>
+            </div>
+            <a href="?date={{ today|date:'Y-m-d' }}&mode={{ view_mode }}&day={{ today|date:'j' }}" class="today-button">Сегодня</a>
+            <div class="view-switch">
+                <a href="?date={{ selected_date|date:'Y-m-d' }}&mode=week&day={{ anchor_day }}" class="view-switch-item {% if view_mode == 'week' %}active{% endif %}">Неделя</a>
+                <a href="?date={{ selected_date|date:'Y-m-d' }}&mode=month&day={{ anchor_day }}" class="view-switch-item {% if view_mode == 'month' %}active{% endif %}">Месяц</a>
+            </div>
         </div>
     </div>
 
-    <div class="calendar-legend d-flex flex-wrap gap-3 px-3 py-2 border-bottom" aria-label="Легенда календаря">
-        <span class="calendar-legend-item"><span class="calendar-legend-swatch legend-planned d-inline-flex align-items-center justify-content-center fw-bold" aria-hidden="true">◷</span>Запланирована</span>
-        <span class="calendar-legend-item"><span class="calendar-legend-swatch legend-completed d-inline-flex align-items-center justify-content-center fw-bold" aria-hidden="true">✓</span>Выполнена</span>
-        <span class="calendar-legend-item"><span class="calendar-legend-swatch legend-skipped d-inline-flex align-items-center justify-content-center fw-bold" aria-hidden="true">✕</span>Пропущена</span>
-        <span class="calendar-legend-item"><span class="calendar-legend-swatch legend-selected" aria-hidden="true"></span>Выбранный день</span>
-        <span class="calendar-legend-item"><span class="calendar-legend-swatch legend-today" aria-hidden="true"></span>Сегодня</span>
-    </div>
-
-
-    <div class="table-responsive">
-        <table class="table table-bordered mb-0 calendar-table">
-            <thead class="table-light text-center small">
+    <div class="calendar-scroll">
+        <table class="calendar-table">
+            <thead>
                 <tr>
                     <th>Пн</th><th>Вт</th><th>Ср</th><th>Чт</th><th>Пт</th><th>Сб</th><th>Вс</th>
                 </tr>
@@ -80,43 +78,32 @@
                 {% for week in calendar_weeks %}
                 <tr>
                     {% for day in week %}
-                    <td class="cal-cell p-2 {% if day.is_selected %}cal-selected{% endif %} {% if day.is_today %}cal-today{% endif %} {% if not day.in_current_month and view_mode == 'month' %}text-muted bg-light{% endif %}">
-                        <div class="d-flex justify-content-between align-items-center mb-1">
+                    <td class="calendar-cell {% if day.is_selected %}is-selected{% endif %} {% if day.is_today %}is-today{% endif %} {% if not day.in_current_month and view_mode == 'month' %}is-outside-month{% endif %}">
+                        <div class="calendar-cell-top">
                             <a href="?date={{ day.date|date:'Y-m-d' }}&mode={{ view_mode }}&day={{ anchor_day }}"
                                aria-label="{{ day.date|date:'l, d.m.Y' }}{% if day.is_selected %}, выбранный день{% endif %}{% if day.is_today %}, сегодня{% endif %}"
-                               class="cal-day-link fw-bold text-decoration-none {% if day.is_selected %}text-primary{% else %}text-dark{% endif %}">
-                                {{ day.date|date:"d.m" }}
+                               class="calendar-day-number {% if day.is_today %}today-number{% endif %}">
+                                {{ day.date|date:"d" }}
                             </a>
                             {% if day.workouts %}
-                                <span class="cal-day-count small text-primary"
-                                      aria-label="Запланировано: {{ day.planned_count }}, выполнено: {{ day.completed_count }}, пропущено: {{ day.skipped_count }}">
-                                    <span class="d-inline-flex gap-1" aria-hidden="true">
-                                        {% if day.planned_count %}<span class="badge bg-primary-subtle text-primary-emphasis">{{ day.planned_count }}</span>{% endif %}
-                                        {% if day.completed_count %}<span class="badge bg-success-subtle text-success-emphasis">{{ day.completed_count }}</span>{% endif %}
-                                        {% if day.skipped_count %}<span class="badge bg-secondary-subtle text-secondary-emphasis">{{ day.skipped_count }}</span>{% endif %}
-                                    </span>
-                                </span>
-                            {% endif %}
-                            {% if day.total_calories > 0 %}
-                                <span class="cal-calories badge bg-danger-subtle text-danger border border-danger-subtle">
-                                    🔥 {{ day.total_calories }} ккал
-                                </span>
+                                <span class="day-workout-count" aria-label="Тренировок: {{ day.workouts|length }}">{{ day.workouts|length }}</span>
                             {% endif %}
                         </div>
 
+                        <div class="calendar-events">
                         {% for w in day.workouts %}
-                            <div class="cal-workout-item p-1 mb-1 rounded small {% if w.status == 'completed' %}bg-success-subtle text-success-emphasis border border-success-subtle{% elif w.status == 'skipped' %}bg-secondary-subtle text-secondary-emphasis text-decoration-line-through border border-secondary-subtle{% else %}bg-primary-subtle text-primary-emphasis border border-primary-subtle{% endif %}">
-                                <a href="?date={{ day.date|date:'Y-m-d' }}&mode={{ view_mode }}&day={{ anchor_day }}"
-                                   class="text-decoration-none text-reset d-block"
-                                   aria-label="{{ w.get_status_display }}: {{ w.scheduled_at|date:'H:i' }} {{ w.title }}">
-                                    <strong>{{ w.scheduled_at|date:"H:i" }}</strong> {{ w.title }}
-                                    <span class="fw-bold ms-1" aria-hidden="true">{% if w.status == 'completed' %}✓{% elif w.status == 'skipped' %}✕{% else %}◷{% endif %}</span>
+                            <a href="?date={{ day.date|date:'Y-m-d' }}&mode={{ view_mode }}&day={{ anchor_day }}"
+                               aria-label="{{ w.get_status_display }}: {{ w.scheduled_at|date:'H:i' }} {{ w.title }}"
+                               class="calendar-event {% if w.status == 'completed' %}event-completed{% elif w.status == 'skipped' %}event-skipped{% else %}event-planned{% endif %}">
+                                <span class="event-time">{{ w.scheduled_at|date:"H:i" }}</span>
+                                <span class="event-name">{{ w.title }}</span>
+                                <span class="event-mark" aria-hidden="true">{% if w.status == 'completed' %}✓{% elif w.status == 'skipped' %}✕{% else %}◷{% endif %}</span>
                                 </a>
-                            </div>
-                        {% empty %}
-
-                            <div class="text-muted small opacity-50">—</div>
                         {% endfor %}
+                        </div>
+                        {% if day.total_calories > 0 %}
+                            <span class="calendar-calories">{{ day.total_calories }} ккал</span>
+                        {% endif %}
                     </td>
                     {% endfor %}
                 </tr>
@@ -124,14 +111,26 @@
             </tbody>
         </table>
     </div>
-</div>
-<div class="row g-4">
-    <div class="col-lg-7">
-        <div class="card border-0 shadow-sm mb-3">
-            <div class="card-header bg-white fw-bold py-3">
-                Тренировки на {{ selected_date|date:"d.m.Y" }}
+    <div class="calendar-footer">
+        <div class="status-legend" aria-label="Легенда статусов">
+            <span class="legend-item"><span class="legend-dot legend-planned"></span>Запланирована</span>
+            <span class="legend-item"><span class="legend-dot legend-completed"></span>Выполнена</span>
+            <span class="legend-item"><span class="legend-dot legend-skipped"></span>Пропущена</span>
+        </div>
+        <div class="calendar-key">
+            <span><span class="key-selected"></span> Выбранный день</span>
+            <span><span class="key-today"></span> Сегодня</span>
+        </div>
+    </div>
+</section>
+<div class="content-grid">
+    <div class="content-main">
+        <section class="panel day-panel">
+            <div class="panel-heading day-heading">
+                <h2 class="section-title">Тренировки на {{ selected_date|date:"d.m.Y" }}</h2>
+                <span class="day-total-pill">{{ selected_day_workouts|length }} занятий</span>
             </div>
-            <div class="card-body">
+            <div class="panel-body">
                 {% for workout in selected_day_workouts %}
                     <div class="border rounded p-3 mb-3 bg-white">
                         <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
@@ -298,15 +297,15 @@
                     </div>
                 </form>
             </div>
-        </div>
+        </section>
     </div>
-    <div class="col-lg-5">
-        <div class="card border-0 shadow-sm">
-            <div class="card-header bg-white fw-bold py-3 d-flex justify-content-between">
-                <span>Учёт калорий за {{ selected_date|date:"d.m.Y" }}</span>
-                <span class="text-danger">Итого: {{ selected_day_total_calories }} ккал</span>
+    <aside class="content-side">
+        <section class="panel calories-panel">
+            <div class="panel-heading">
+                <h2 class="section-title">Калории</h2>
+                <span class="day-total-pill">{{ selected_day_total_calories }} ккал</span>
             </div>
-            <div class="card-body">
+            <div class="panel-body">
                 <ul class="list-group list-group-flush small mb-3">
                     {% for log in selected_day_calorie_logs %}
                         <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
@@ -361,8 +360,8 @@
                     </form>
                 {% endif %}
             </div>
-        </div>
+            </section>
+        </aside>
     </div>
-</div>
 
 {% endblock %}

@@ -46,6 +46,9 @@ urlpatterns = [
     path("template-exercise/<int:exercise_id>/delete/", views.template_exercise_delete_view, name="template_exercise_delete"),
     path("exercise/<int:exercise_id>/history/", views.exercise_history_view, name="exercise_history"),
     path("exercise/<int:exercise_id>/history/add/", views.exercise_result_add_view, name="exercise_result_add"),
+    path("account/data/", views.account_data_view, name="account_data"),
+    path("account/export/", views.export_user_data_view, name="export_user_data"),
+    path("account/delete-data/", views.delete_user_data_view, name="delete_user_data"),
     path("export/", views.export_data_view, name="export_data"),
     path("calories/add/", views.calorie_create_view, name="calorie_create"),
     path(

@@ -3,8 +3,10 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, time, timedelta
 from unittest.mock import patch
 from decimal import Decimal
+from pathlib import Path
 
 from django.contrib.auth import get_user_model
+from django.contrib.staticfiles import finders
 from django.core.exceptions import ValidationError
 from django.core.management.base import CommandError
 from django.db import close_old_connections
@@ -1264,7 +1266,10 @@ class RemainingQaTasksTests(TestCase):
         self.assertContains(response, "Выполнена: 11:00 Готовая-тренировка")
         self.assertContains(response, "Пропущена: 12:00 Пропуск-тренировка")
 
-        self.assertContains(response, ":focus-visible")
+        self.assertContains(response, "workout/css/app.css")
+        css_path = finders.find("workout/css/app.css")
+        self.assertIsNotNone(css_path)
+        self.assertIn(":focus-visible", Path(css_path).read_text(encoding="utf-8"))
 
 class IntegrationAndFeaturesTests(TestCase):
     def setUp(self):
@@ -1329,6 +1334,50 @@ class IntegrationAndFeaturesTests(TestCase):
         resp_after = self.client.get(history_url)
         self.assertContains(resp_after, "62,5 кг")
 
+    def test_exercise_result_rejects_foreign_workout_or_exercise(self):
+        own_workout = Workout.objects.create(user=self.user, title="Моя тренировка")
+        foreign_workout = Workout.objects.create(user=self.other_user, title="Чужая тренировка")
+        own_exercise = Exercise.objects.create(workout=own_workout, name="Жим")
+        foreign_exercise = Exercise.objects.create(workout=foreign_workout, name="Тяга")
+
+        with self.assertRaises(ValidationError):
+            ExerciseResult.objects.create(
+                user=self.user,
+                workout=foreign_workout,
+                exercise=foreign_exercise,
+                exercise_name="Тяга",
+                set_number=1,
+                reps=8,
+            )
+        with self.assertRaises(ValidationError):
+            ExerciseResult.objects.create(
+                user=self.user,
+                workout=own_workout,
+                exercise=foreign_exercise,
+                exercise_name="Тяга",
+                set_number=1,
+                reps=8,
+            )
+        self.assertEqual(own_exercise.workout_id, own_workout.id)
+
+    def test_exercise_result_survives_exercise_deletion(self):
+        workout = Workout.objects.create(user=self.user, title="История")
+        exercise = Exercise.objects.create(workout=workout, name="Жим")
+        result = ExerciseResult.objects.create(
+            user=self.user, workout=workout, exercise=exercise,
+            exercise_name="Жим", set_number=1, reps=8,
+            weight_kg=Decimal("40.0"),
+        )
+
+        exercise.delete()
+        result.refresh_from_db()
+        self.assertIsNone(result.exercise_id)
+        self.assertTrue(ExerciseResult.objects.filter(id=result.id, user=self.user).exists())
+        payload = self.client.get(
+            reverse("export_user_data"), {"format": "json"}
+        ).json()
+        self.assertEqual(payload["exercise_results"][0]["exercise_name"], "Жим")
+
     def test_workout_template_creation_and_usage(self):
         resp_create = self.client.post(
             reverse("template_create"),
@@ -1336,6 +1385,9 @@ class IntegrationAndFeaturesTests(TestCase):
         )
         self.assertIn(resp_create.status_code, (200, 302))
         template = WorkoutTemplate.objects.get(user=self.user, name="Базовый фулбоди")
+
+        use_url = reverse("template_use", args=[template.id])
+        self.assertEqual(self.client.get(use_url).status_code, 200)
 
         resp_add_ex = self.client.post(
             reverse("template_exercise_add", args=[template.id]),
@@ -1356,7 +1408,69 @@ class IntegrationAndFeaturesTests(TestCase):
         ).first()
         self.assertIsNotNone(created_workout)
         self.assertEqual(created_workout.exercises.count(), 1)
-        self.assertEqual(created_workout.exercises.first().name, "Приседания")
+        created_exercise = created_workout.exercises.get()
+        self.assertEqual(created_exercise.name, "Приседания")
+        self.assertEqual(created_exercise.sets, 4)
+        self.assertEqual(created_exercise.reps, 12)
+        self.assertEqual(created_exercise.weight_kg, Decimal("50.0"))
+        self.assertEqual(
+            timezone.localtime(created_workout.scheduled_at),
+            timezone.make_aware(datetime(2026, 10, 20, 19, 0), self.tz),
+        )
+
+        invalid_use = self.client.post(
+            use_url, data={"date": "invalid-date", "time": "25:90"}
+        )
+        self.assertEqual(invalid_use.status_code, 200)
+        self.assertEqual(
+            Workout.objects.filter(user=self.user, title="Базовый фулбоди").count(), 1
+        )
+
+    def test_template_views_are_scoped_to_the_owner(self):
+        template = WorkoutTemplate.objects.create(
+            user=self.other_user, name="Чужой шаблон"
+        )
+        self.assertEqual(
+            self.client.get(reverse("template_use", args=[template.id])).status_code,
+            404,
+        )
+        self.assertEqual(
+            self.client.post(reverse("template_delete", args=[template.id])).status_code,
+            404,
+        )
+        self.assertTrue(WorkoutTemplate.objects.filter(id=template.id).exists())
+
+    def test_template_exercise_delete_requires_post(self):
+        template = WorkoutTemplate.objects.create(user=self.user, name="Мой шаблон")
+        exercise = TemplateExercise.objects.create(template=template, name="Планка")
+        response = self.client.get(
+            reverse("template_exercise_delete", args=[exercise.id])
+        )
+        self.assertEqual(response.status_code, 405)
+        self.assertTrue(TemplateExercise.objects.filter(id=exercise.id).exists())
+
+    def test_template_edit_and_delete_work_for_owner(self):
+        template = WorkoutTemplate.objects.create(user=self.user, name="Черновик")
+        exercise = TemplateExercise.objects.create(template=template, name="Присед")
+
+        response = self.client.post(
+            reverse("template_edit", args=[template.id]),
+            data={"name": "Силовая", "notes": "Обновлённая заметка"},
+        )
+        self.assertEqual(response.status_code, 302)
+        template.refresh_from_db()
+        self.assertEqual(template.name, "Силовая")
+        self.assertEqual(template.notes, "Обновлённая заметка")
+
+        response = self.client.post(
+            reverse("template_exercise_delete", args=[exercise.id])
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(TemplateExercise.objects.filter(id=exercise.id).exists())
+
+        response = self.client.post(reverse("template_delete", args=[template.id]))
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(WorkoutTemplate.objects.filter(id=template.id).exists())
 
     def test_export_user_data_contains_only_own_records(self):
         Workout.objects.create(
@@ -1381,6 +1495,224 @@ class IntegrationAndFeaturesTests(TestCase):
         body = export_resp.content.decode("utf-8", errors="replace")
         self.assertIn("Моя экспортная тренировка", body)
         self.assertNotIn("Чужая секретная тренировка", body)
+
+    def test_full_export_includes_all_user_data_only(self):
+        workout = Workout.objects.create(
+            user=self.user,
+            title="Мой архив",
+            scheduled_at=timezone.make_aware(datetime(2026, 10, 15, 17, 0), self.tz),
+            status=Workout.Status.COMPLETED,
+        )
+        exercise = Exercise.objects.create(
+            workout=workout, name="Жим лёжа", sets=3, reps=8, weight_kg=Decimal("70.0")
+        )
+        ExerciseResult.objects.create(
+            user=self.user, workout=workout, exercise=exercise,
+            exercise_name=exercise.name, set_number=1, reps=7,
+            weight_kg=Decimal("72.5"),
+        )
+        DailyCalories.objects.create(
+            user=self.user, workout=workout, calories_burned=425
+        )
+        template = WorkoutTemplate.objects.create(
+            user=self.user, name="Мой шаблон", notes="Сохранять технику"
+        )
+        TemplateExercise.objects.create(
+            template=template, name="Тяга", sets=4, reps=6, weight_kg=Decimal("80.0")
+        )
+
+        foreign_workout = Workout.objects.create(
+            user=self.other_user, title="Чужой приватный план"
+        )
+        foreign_template = WorkoutTemplate.objects.create(
+            user=self.other_user, name="Чужой приватный шаблон"
+        )
+        TemplateExercise.objects.create(
+            template=foreign_template, name="Чужое упражнение"
+        )
+        invalid_foreign_result = ExerciseResult(
+            user=self.user,
+            workout=foreign_workout,
+            exercise_name="Чужой результат",
+            set_number=1,
+            reps=5,
+        )
+        ExerciseResult.objects.bulk_create([invalid_foreign_result])
+
+        response = self.client.get(reverse("export_user_data"), {"format": "json"})
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("attachment;", response["Content-Disposition"])
+        payload = response.json()
+        self.assertEqual(payload["user"]["username"], self.user.username)
+        self.assertEqual(payload["workouts"][0]["exercises"][0]["name"], "Жим лёжа")
+        self.assertEqual(payload["exercise_results"][0]["weight_kg"], "72.5")
+        self.assertEqual(payload["workout_templates"][0]["exercises"][0]["name"], "Тяга")
+        self.assertEqual(payload["daily_calories"][0]["calories_burned"], 425)
+        serialized = response.content.decode("utf-8")
+        self.assertNotIn("Чужой приватный план", serialized)
+        self.assertNotIn("Чужой приватный шаблон", serialized)
+        self.assertNotIn("Чужое упражнение", serialized)
+        self.assertNotIn("Чужой результат", serialized)
+        self.assertTrue(Workout.objects.filter(id=foreign_workout.id).exists())
+
+        csv_response = self.client.get(reverse("export_user_data"), {"format": "csv"})
+        self.assertEqual(csv_response.status_code, 200)
+        self.assertIn("text/csv", csv_response["Content-Type"])
+        csv_content = csv_response.content.decode("utf-8-sig")
+        self.assertIn("set_result", csv_content)
+        self.assertIn("template_exercise", csv_content)
+        self.assertNotIn("Чужой приватный план", csv_content)
+        self.assertNotIn("Чужое упражнение", csv_content)
+
+        selected_export = self.client.post(
+            reverse("export_data"),
+            data={"results": "on", "format": "json"},
+        )
+        self.assertEqual(selected_export.status_code, 200)
+        self.assertNotIn(
+            "Чужой результат",
+            selected_export.content.decode("utf-8"),
+        )
+
+    def test_full_export_rejects_unknown_format(self):
+        response = self.client.get(reverse("export_user_data"), {"format": "xml"})
+        self.assertEqual(response.status_code, 400)
+
+    def test_account_data_page_is_available_and_requires_login(self):
+        response = self.client.get(reverse("account_data"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Безопасное удаление данных")
+        self.assertContains(response, reverse("export_user_data"))
+
+        self.client.logout()
+        response = self.client.get(reverse("account_data"))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("login"), response.url)
+
+    def test_data_only_deletion_requires_confirmation_and_preserves_other_users(self):
+        own_workout = Workout.objects.create(
+            user=self.user, title="Удалить", status=Workout.Status.COMPLETED
+        )
+        own_exercise = Exercise.objects.create(workout=own_workout, name="Жим")
+        ExerciseResult.objects.create(
+            user=self.user, workout=own_workout, exercise=own_exercise,
+            exercise_name="Жим", set_number=1, reps=5,
+        )
+        DailyCalories.objects.create(
+            user=self.user, workout=own_workout, calories_burned=300
+        )
+        own_template = WorkoutTemplate.objects.create(user=self.user, name="Удалить")
+        TemplateExercise.objects.create(template=own_template, name="Тяга")
+        other_workout = Workout.objects.create(
+            user=self.other_user, title="Оставить", status=Workout.Status.COMPLETED
+        )
+        other_exercise = Exercise.objects.create(workout=other_workout, name="Оставить")
+        ExerciseResult.objects.create(
+            user=self.other_user, workout=other_workout, exercise=other_exercise,
+            exercise_name="Оставить", set_number=1, reps=5,
+        )
+
+        response = self.client.post(
+            reverse("delete_user_data"),
+            data={
+                "scope": "data_only",
+                "password": "wrong-password",
+                "confirmation": "УДАЛИТЬ",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(Workout.objects.filter(id=own_workout.id).exists())
+
+        response = self.client.post(
+            reverse("delete_user_data"),
+            data={
+                "scope": "data_only",
+                "password": "Password123!",
+                "confirmation": "УДАЛИТЬ",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(User.objects.filter(id=self.user.id).exists())
+        self.assertFalse(Workout.objects.filter(user=self.user).exists())
+        self.assertFalse(Exercise.objects.filter(workout__user=self.user).exists())
+        self.assertFalse(ExerciseResult.objects.filter(user=self.user).exists())
+        self.assertFalse(DailyCalories.objects.filter(user=self.user).exists())
+        self.assertFalse(WorkoutTemplate.objects.filter(user=self.user).exists())
+        self.assertFalse(TemplateExercise.objects.filter(template__user=self.user).exists())
+        self.assertTrue(Workout.objects.filter(id=other_workout.id).exists())
+        self.assertTrue(ExerciseResult.objects.filter(user=self.other_user).exists())
+
+    def test_full_account_deletion_removes_owned_records_and_keeps_other_users(self):
+        workout = Workout.objects.create(
+            user=self.user, title="Удалить аккаунт", status=Workout.Status.COMPLETED
+        )
+        exercise = Exercise.objects.create(workout=workout, name="Присед")
+        ExerciseResult.objects.create(
+            user=self.user, workout=workout, exercise=exercise,
+            exercise_name="Присед", set_number=1, reps=5,
+        )
+        DailyCalories.objects.create(
+            user=self.user, workout=workout, calories_burned=250
+        )
+        template = WorkoutTemplate.objects.create(user=self.user, name="Мой шаблон")
+        TemplateExercise.objects.create(template=template, name="Планка")
+        other_workout = Workout.objects.create(user=self.other_user, title="Чужая")
+        other_user_id = self.user.id
+
+        response = self.client.post(
+            reverse("delete_user_data"),
+            data={
+                "scope": "full_account",
+                "password": "Password123!",
+                "confirmation": "УДАЛИТЬ",
+            },
+        )
+        self.assertRedirects(response, reverse("login"), fetch_redirect_response=False)
+        self.assertFalse(User.objects.filter(id=other_user_id).exists())
+        self.assertFalse(Workout.objects.filter(user_id=other_user_id).exists())
+        self.assertFalse(Exercise.objects.filter(workout__user_id=other_user_id).exists())
+        self.assertFalse(ExerciseResult.objects.filter(user_id=other_user_id).exists())
+        self.assertFalse(DailyCalories.objects.filter(user_id=other_user_id).exists())
+        self.assertFalse(WorkoutTemplate.objects.filter(user_id=other_user_id).exists())
+        self.assertTrue(User.objects.filter(id=self.other_user.id).exists())
+        self.assertTrue(Workout.objects.filter(id=other_workout.id).exists())
+
+    def test_full_account_deletion_is_blocked_for_staff(self):
+        self.user.is_staff = True
+        self.user.save(update_fields=["is_staff"])
+        response = self.client.post(
+            reverse("delete_user_data"),
+            data={
+                "scope": "full_account",
+                "password": "Password123!",
+                "confirmation": "УДАЛИТЬ",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(User.objects.filter(id=self.user.id).exists())
+
+    def test_data_deletion_preserves_foreign_results_linked_to_owned_workout(self):
+        workout = Workout.objects.create(user=self.user, title="Моя тренировка")
+        foreign_result = ExerciseResult(
+            user=self.other_user,
+            workout=workout,
+            exercise_name="Некорректная историческая запись",
+            set_number=1,
+            reps=5,
+        )
+        ExerciseResult.objects.bulk_create([foreign_result])
+
+        response = self.client.post(
+            reverse("delete_user_data"),
+            data={
+                "scope": "data_only",
+                "password": "Password123!",
+                "confirmation": "УДАЛИТЬ",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(Workout.objects.filter(id=workout.id).exists())
+        self.assertTrue(ExerciseResult.objects.filter(id=foreign_result.id).exists())
 
     def test_cascade_deletion_leaves_no_orphan_user_records(self):
         w = Workout.objects.create(

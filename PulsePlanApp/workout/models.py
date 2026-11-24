@@ -261,5 +261,21 @@ class ExerciseResult(models.Model):
         verbose_name = "Результат подхода"
         verbose_name_plural = "Результаты подходов"
 
+    def clean(self):
+        super().clean()
+        if self.workout_id and self.user_id and self.workout.user_id != self.user_id:
+            raise ValidationError(
+                {"workout": "Нельзя привязать результат к тренировке другого пользователя."}
+            )
+        if self.exercise_id and self.workout_id:
+            if self.exercise.workout_id != self.workout_id:
+                raise ValidationError(
+                    {"exercise": "Упражнение должно относиться к указанной тренировке."}
+                )
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"{self.exercise_name}: {self.set_number}-й подход, {self.reps}×{self.weight_kg} кг"

@@ -1,3 +1,4 @@
+{% load static %}
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -5,91 +6,40 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}PulsePlan — Дневник тренировок{% endblock %}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        body { background-color: #f8fafc; }
-        .cal-cell { min-height: 120px; vertical-align: top; width: 14.28%; transition: background 0.15s; }
-        .cal-cell:hover { background-color: #f1f5f9; }
-        .cal-selected { outline: 2px solid #2563eb; background-color: #eff6ff !important; }
-        .cal-today { border-top: 3px solid #16a34a !important; }
-        .calendar-legend { font-size: .875rem; }
-        .calendar-legend-item { display: inline-flex; align-items: center; gap: .4rem; }
-        .calendar-legend-swatch { display: inline-block; width: .9rem; height: .9rem; border-radius: .2rem; }
-        .legend-planned { background-color: #cfe2ff; }
-        .legend-completed { background-color: #d1e7dd; }
-        .legend-skipped { background-color: #e2e3e5; }
-        .legend-selected { background-color: #eff6ff; outline: 2px solid #2563eb; }
-        .legend-today { border-top: 3px solid #16a34a; background-color: #fff; }
-        .cal-day-count .badge { font-size: .6rem; padding: .2rem .3rem; }
-        .calendar-table { table-layout: fixed; width: 100%; }
-        .cal-day-count { display: none; }
-        @media (max-width: 575.98px) {
-            .calendar-table th { padding: .35rem .1rem; }
-            .cal-cell { min-height: 3.5rem; padding: .25rem !important; }
-            .cal-cell .cal-workout-item,
-            .cal-cell .cal-calories { display: none !important; }
-            .cal-cell .cal-day-count { display: block; }
-            .cal-cell .cal-day-link {
-                display: flex;
-                min-height: 2.75rem;
-                align-items: center;
-                justify-content: center;
-                font-size: .75rem;
-            }
-            .calendar-navigation,
-            .calendar-modes { justify-content: center; }
-            .exercise-row { flex-wrap: wrap; }
-            .exercise-details { overflow-wrap: anywhere; }
-            .btn-sm,
-            .btn-link { min-width: 2.75rem; min-height: 2.75rem; }
-            .form-control-sm,
-            .form-select-sm { min-height: 2.75rem; }
-        }
-                :focus-visible {
-            outline: 3px solid #2563eb !important;
-            outline-offset: 2px !important;
-            box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.25) !important;
-        }
-        .navbar-dark :focus-visible {
-            outline: 3px solid #facc15 !important;
-            outline-offset: 2px !important;
-            box-shadow: none !important;
-        }
-        .cal-day-link:focus-visible,
-        .cal-workout-item a:focus-visible {
-            border-radius: 4px;
-            background-color: rgba(37, 99, 235, 0.12);
-        }
-    </style>
+    <link rel="stylesheet" href="{% static 'workout/css/app.css' %}">
 </head>
 <body>
-<nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
-    <div class="container">
-        <a class="navbar-brand fw-bold" href="{% url 'dashboard' %}">⚡ PulsePlan - тренируйся!</a>
+<nav class="navbar navbar-expand-lg navbar-shell">
+    <div class="app-container">
+        <a class="navbar-brand brand-link" href="{% url 'dashboard' %}">
+            <img class="brand-logo" src="{% static 'workout/img/pulseplan-logo-white.png' %}" alt="PulsePlan">
+        </a>
         <button class="navbar-toggler" type="button" data-bs-toggle="collapse"
                 data-bs-target="#pulseplanNavbar" aria-controls="pulseplanNavbar"
                 aria-expanded="false" aria-label="Открыть меню">
             <span class="navbar-toggler-icon"></span>
         </button>
         <div class="collapse navbar-collapse" id="pulseplanNavbar">
-            <div class="navbar-nav ms-auto d-flex flex-lg-row align-items-lg-center gap-2">
+            <div class="navbar-nav ms-auto d-flex flex-lg-row align-items-lg-center gap-2 nav-account">
             {% if user.is_authenticated %}
                 <a class="nav-link text-light" href="{% url 'template_list' %}">Шаблоны</a>
                 <a class="nav-link text-light" href="{% url 'export_data' %}">Экспорт</a>
-                <span class="navbar-text text-light small">Профиль: <strong>{{ user.username }}</strong></span>
+                <a class="nav-link text-light" href="{% url 'account_data' %}">Данные аккаунта</a>
+                <span class="nav-user"><span class="nav-user-label">Профиль:</span><strong>{{ user.username }}</strong></span>
                 <form method="post" action="{% url 'logout' %}" class="m-0">
                     {% csrf_token %}
-                    <button type="submit" class="btn btn-outline-light btn-sm">Выйти</button>
+                    <button type="submit" class="btn-nav-logout">Выйти</button>
                 </form>
             {% else %}
-                <a href="{% url 'login' %}" class="btn btn-outline-light btn-sm">Войти</a>
-                <a href="{% url 'register' %}" class="btn btn-primary btn-sm">Регистрация</a>
+                <a href="{% url 'login' %}" class="btn-nav-logout">Войти</a>
+                <a href="{% url 'register' %}" class="btn-nav-light">Регистрация</a>
             {% endif %}
             </div>
         </div>
     </div>
 </nav>
 
-<main class="container pb-5">
+<main class="app-main">
      {% if messages %}
         {% for message in messages %}
             <div class="alert alert-{% if message.tags == 'error' %}danger{% else %}{{ message.tags|default:'info' }}{% endif %} alert-dismissible fade show"
