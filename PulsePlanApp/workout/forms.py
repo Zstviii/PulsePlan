@@ -2,7 +2,7 @@ from datetime import datetime, time
 from django import forms
 from django.utils import timezone
 
-from .models import DailyCalories, Exercise, Workout
+from .models import DailyCalories, Exercise, ExerciseResult, TemplateExercise, Workout, WorkoutTemplate
 
 
 class WorkoutForm(forms.ModelForm):
@@ -140,3 +140,42 @@ class DailyCaloriesForm(forms.ModelForm):
         if target_date and target_date > timezone.localdate():
             raise forms.ValidationError("Нельзя добавить запись калорий за будущую дату.")
         return cleaned_data
+
+
+class WorkoutTemplateForm(forms.ModelForm):
+    class Meta:
+        model = WorkoutTemplate
+        fields = ["name", "notes"]
+        widgets = {
+            "name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Например: Силовая тренировка"}),
+            "notes": forms.Textarea(attrs={"class": "form-control", "rows": 3, "placeholder": "Необязательно"}),
+        }
+
+    def clean_name(self):
+        name = (self.cleaned_data.get("name") or "").strip()
+        if not name:
+            raise forms.ValidationError("Укажите название шаблона.")
+        return name
+
+
+class TemplateExerciseForm(forms.ModelForm):
+    class Meta:
+        model = TemplateExercise
+        fields = ["name", "sets", "reps", "weight_kg"]
+        widgets = {
+            "name": forms.TextInput(attrs={"class": "form-control", "placeholder": "Жим лёжа"}),
+            "sets": forms.NumberInput(attrs={"class": "form-control", "min": 1}),
+            "reps": forms.NumberInput(attrs={"class": "form-control", "min": 1}),
+            "weight_kg": forms.NumberInput(attrs={"class": "form-control", "min": 0, "step": "0.5"}),
+        }
+
+
+class ExerciseResultForm(forms.ModelForm):
+    class Meta:
+        model = ExerciseResult
+        fields = ["set_number", "reps", "weight_kg"]
+        widgets = {
+            "set_number": forms.NumberInput(attrs={"class": "form-control", "min": 1}),
+            "reps": forms.NumberInput(attrs={"class": "form-control", "min": 1}),
+            "weight_kg": forms.NumberInput(attrs={"class": "form-control", "min": 0, "step": "0.5"}),
+        }

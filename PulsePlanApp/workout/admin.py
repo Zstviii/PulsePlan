@@ -1,3 +1,4 @@
 from django.contrib import admin
+from .models import DailyCalories, Exercise, ExerciseResult, TemplateExercise, Workout, WorkoutTemplate
 
-# Register your models here.
+admin.site.register([Workout, Exercise, DailyCalories, WorkoutTemplate, TemplateExercise, ExerciseResult])

@@ -42,16 +42,30 @@
     <div class="card-header bg-white d-flex flex-wrap justify-content-between align-items-center gap-2 py-3">
         <div class="calendar-navigation d-flex flex-wrap align-items-center gap-2">
             <a href="?date={{ prev_date|date:'Y-m-d' }}&mode={{ view_mode }}&day={{ anchor_day }}" class="btn btn-outline-secondary btn-sm">← Пред.</a>
-            <span class="fw-bold fs-5 mx-2">{{ selected_date|date:"F Y" }}</span>
+            <span class="fw-bold fs-5 mx-2">
+                {% if view_mode == 'week' %}
+                    {{ week_period_start|date:"d.m.Y" }} — {{ week_period_end|date:"d.m.Y" }}
+                {% else %}
+                    {{ selected_date|date:"F Y" }}
+                {% endif %}
+            </span>
             <a href="?date={{ next_date|date:'Y-m-d' }}&mode={{ view_mode }}&day={{ anchor_day }}" class="btn btn-outline-secondary btn-sm">След. →</a>
-            <a href="?mode={{ view_mode }}" class="btn btn-link btn-sm text-decoration-none">Сегодня</a>
+            <a href="?date={{ today|date:'Y-m-d' }}&mode={{ view_mode }}&day={{ today|date:'j' }}" class="btn btn-link btn-sm text-decoration-none">Сегодня</a>
         </div>
         <div class="calendar-modes btn-group btn-group-sm">
-            <a href="?date={{ selected_date|date:'Y-m-d' }}&mode=week"
+            <a href="?date={{ selected_date|date:'Y-m-d' }}&mode=week&day={{ anchor_day }}"
                class="btn {% if view_mode == 'week' %}btn-primary{% else %}btn-outline-primary{% endif %}">Неделя</a>
-            <a href="?date={{ selected_date|date:'Y-m-d' }}&mode=month"
+            <a href="?date={{ selected_date|date:'Y-m-d' }}&mode=month&day={{ anchor_day }}"
                class="btn {% if view_mode == 'month' %}btn-primary{% else %}btn-outline-primary{% endif %}">Месяц</a>
         </div>
+    </div>
+
+    <div class="calendar-legend d-flex flex-wrap gap-3 px-3 py-2 border-bottom" aria-label="Легенда календаря">
+        <span class="calendar-legend-item"><span class="calendar-legend-swatch legend-planned" aria-hidden="true"></span>Запланирована</span>
+        <span class="calendar-legend-item"><span class="calendar-legend-swatch legend-completed" aria-hidden="true"></span>Выполнена</span>
+        <span class="calendar-legend-item"><span class="calendar-legend-swatch legend-skipped" aria-hidden="true"></span>Пропущена</span>
+        <span class="calendar-legend-item"><span class="calendar-legend-swatch legend-selected" aria-hidden="true"></span>Выбранный день</span>
+        <span class="calendar-legend-item"><span class="calendar-legend-swatch legend-today" aria-hidden="true"></span>Сегодня</span>
     </div>
 
     <div class="table-responsive">
@@ -67,13 +81,19 @@
                     {% for day in week %}
                     <td class="cal-cell p-2 {% if day.is_selected %}cal-selected{% endif %} {% if day.is_today %}cal-today{% endif %} {% if not day.in_current_month and view_mode == 'month' %}text-muted bg-light{% endif %}">
                         <div class="d-flex justify-content-between align-items-center mb-1">
-                            <a href="?date={{ day.date|date:'Y-m-d' }}&mode={{ view_mode }}"
+                            <a href="?date={{ day.date|date:'Y-m-d' }}&mode={{ view_mode }}&day={{ anchor_day }}"
+                               aria-label="{{ day.date|date:'l, d.m.Y' }}{% if day.is_selected %}, выбранный день{% endif %}{% if day.is_today %}, сегодня{% endif %}"
                                class="cal-day-link fw-bold text-decoration-none {% if day.is_selected %}text-primary{% else %}text-dark{% endif %}">
                                 {{ day.date|date:"d.m" }}
                             </a>
                             {% if day.workouts %}
-                                <span class="cal-day-count small text-primary" aria-label="{{ day.workouts|length }} тренировок">
-                                    {{ day.workouts|length }} <span class="visually-hidden">тренировок</span>
+                                <span class="cal-day-count small text-primary"
+                                      aria-label="Запланировано: {{ day.planned_count }}, выполнено: {{ day.completed_count }}, пропущено: {{ day.skipped_count }}">
+                                    <span class="d-inline-flex gap-1" aria-hidden="true">
+                                        {% if day.planned_count %}<span class="badge bg-primary-subtle text-primary-emphasis">{{ day.planned_count }}</span>{% endif %}
+                                        {% if day.completed_count %}<span class="badge bg-success-subtle text-success-emphasis">{{ day.completed_count }}</span>{% endif %}
+                                        {% if day.skipped_count %}<span class="badge bg-secondary-subtle text-secondary-emphasis">{{ day.skipped_count }}</span>{% endif %}
+                                    </span>
                                 </span>
                             {% endif %}
                             {% if day.total_calories > 0 %}
@@ -85,7 +105,7 @@
 
                         {% for w in day.workouts %}
                             <div class="cal-workout-item p-1 mb-1 rounded small {% if w.status == 'completed' %}bg-success-subtle text-success-emphasis{% elif w.status == 'skipped' %}bg-secondary-subtle text-secondary-emphasis text-decoration-line-through{% else %}bg-primary-subtle text-primary-emphasis{% endif %}">
-                                <a href="?date={{ day.date|date:'Y-m-d' }}&mode={{ view_mode }}" class="text-decoration-none text-reset d-block">
+                                <a href="?date={{ day.date|date:'Y-m-d' }}&mode={{ view_mode }}&day={{ anchor_day }}" class="text-decoration-none text-reset d-block">
                                     <strong>{{ w.scheduled_at|date:"H:i" }}</strong> {{ w.title }}
                                     {% if w.status == 'completed' %}✓{% elif w.status == 'skipped' %}✕{% endif %}
                                 </a>
@@ -112,7 +132,7 @@
                     <div class="border rounded p-3 mb-3 bg-white">
                         <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
                             <div>
-                                <span class="badge {% if workout.status == 'completed' %}bg-success{% elif workout.status == 'skipped' %}bg-secondary{% else %}bg-warning text-dark{% endif %} me-1">
+                                <span class="badge {% if workout.status == 'completed' %}bg-success{% elif workout.status == 'skipped' %}bg-secondary{% else %}bg-primary{% endif %} me-1">
                                     {{ workout.get_status_display }}
                                 </span>
                                 <strong class="fs-5">{{ workout.title }}</strong>
@@ -138,7 +158,8 @@
                                         data-bs-toggle="collapse" data-bs-target="#edit-workout-{{ workout.id }}">✏️</button>
 
                                 <form method="post" action="{% url 'workout_delete' workout.id %}"
-                                      onsubmit="return confirm('Удалить тренировку «{{ workout.title|escapejs }}»?');">
+                                      data-delete-title="{{ workout.title }}"
+                                      data-delete-warning="Также будут удалены упражнения, результаты подходов и связанные записи калорий.">
                                     {% csrf_token %}
                                     <input type="hidden" name="mode" value="{{ view_mode }}">
                                     <button type="submit" class="btn btn-outline-danger btn-sm">🗑️</button>
@@ -151,7 +172,7 @@
                                 {% csrf_token %}
                                 <input type="hidden" name="mode" value="{{ view_mode }}">
                                 <div class="col-sm-5">
-                                    <input type="text" name="title" class="form-control form-control-sm" value="{{ workout.title }}" required>
+                                    <input type="text" name="title" class="form-control form-control-sm" value="{{ workout.title }}" maxlength="120" aria-label="Название тренировки" required>
                                 </div>
                                 <div class="col-sm-4">
                                     <input type="date" name="date" class="form-control form-control-sm" value="{{ workout.scheduled_at|date:'Y-m-d' }}" required>
@@ -185,7 +206,8 @@
                                         <button type="button" class="btn btn-outline-primary btn-sm"
                                                 data-bs-toggle="collapse" data-bs-target="#edit-exercise-{{ ex.id }}"
                                                 aria-label="Редактировать {{ ex.name }}">✏️</button>
-                                        <form method="post" action="{% url 'exercise_delete' ex.id %}" class="m-0">
+                                        <a href="{% url 'exercise_history' ex.id %}" class="btn btn-outline-secondary btn-sm" title="История результатов">История</a>
+                                        <form method="post" action="{% url 'exercise_delete' ex.id %}" class="m-0" data-delete-title="{{ ex.name }}">
                                             {% csrf_token %}
                                             <input type="hidden" name="mode" value="{{ view_mode }}">
                                             <button type="submit" class="btn btn-link text-danger p-0 text-decoration-none fw-bold">×</button>
@@ -196,16 +218,19 @@
                                             {% csrf_token %}
                                             <input type="hidden" name="mode" value="{{ view_mode }}">
                                             <div class="col-12 col-sm-5">
-                                                <input type="text" name="name" class="form-control form-control-sm" value="{{ ex.name }}" required>
+                                                <input type="text" name="name" class="form-control form-control-sm" value="{{ ex.name }}" maxlength="120" required aria-label="Название упражнения">
                                             </div>
                                             <div class="col-4 col-sm-2">
-                                                <input type="number" name="sets" class="form-control form-control-sm" value="{{ ex.sets }}" min="1" max="100" required aria-label="Подходы">
+                                                <label class="visually-hidden" for="edit-exercise-sets-{{ ex.id }}">Подходы</label>
+                                                <input id="edit-exercise-sets-{{ ex.id }}" type="number" name="sets" class="form-control form-control-sm" value="{{ ex.sets }}" min="1" max="100" required aria-label="Подходы">
                                             </div>
                                             <div class="col-4 col-sm-2">
-                                                <input type="number" name="reps" class="form-control form-control-sm" value="{{ ex.reps }}" min="1" max="1000" required aria-label="Повторения">
+                                                <label class="visually-hidden" for="edit-exercise-reps-{{ ex.id }}">Повторения</label>
+                                                <input id="edit-exercise-reps-{{ ex.id }}" type="number" name="reps" class="form-control form-control-sm" value="{{ ex.reps }}" min="1" max="1000" required aria-label="Повторения">
                                             </div>
                                             <div class="col-4 col-sm-2">
-                                                <input type="number" step="0.5" name="weight_kg" class="form-control form-control-sm" value="{{ ex.weight_kg|floatformat:'-1u' }}" min="0" max="999.9" required aria-label="Вес в килограммах">
+                                                <label class="visually-hidden" for="edit-exercise-weight-{{ ex.id }}">Вес в килограммах</label>
+                                                <input id="edit-exercise-weight-{{ ex.id }}" type="number" step="0.1" name="weight_kg" class="form-control form-control-sm" value="{{ ex.weight_kg|floatformat:'-1u' }}" min="0" max="999.9" required aria-label="Вес в килограммах">
                                             </div>
                                             <div class="col-12 col-sm-1 d-grid">
                                                 <button type="submit" class="btn btn-primary btn-sm" aria-label="Сохранить упражнение">✓</button>
@@ -222,16 +247,20 @@
                             {% csrf_token %}
                             <input type="hidden" name="mode" value="{{ view_mode }}">
                             <div class="col-sm-5">
-                                <input type="text" name="name" class="form-control form-control-sm" placeholder="Упражнение (напр. Присед)" required>
+                                <label class="visually-hidden" for="new-exercise-name-{{ workout.id }}">Название упражнения</label>
+                                <input id="new-exercise-name-{{ workout.id }}" type="text" name="name" class="form-control form-control-sm" placeholder="Упражнение (напр. Присед)" maxlength="120" required>
                             </div>
                             <div class="col-sm-2">
-                                <input type="number" name="sets" class="form-control form-control-sm" placeholder="Подх." value="3" min="1">
+                                <label class="visually-hidden" for="new-exercise-sets-{{ workout.id }}">Подходы</label>
+                                <input id="new-exercise-sets-{{ workout.id }}" type="number" name="sets" class="form-control form-control-sm" placeholder="Подх." value="3" min="1" max="100">
                             </div>
                             <div class="col-sm-2">
-                                <input type="number" name="reps" class="form-control form-control-sm" placeholder="Повт." value="12" min="1">
+                                <label class="visually-hidden" for="new-exercise-reps-{{ workout.id }}">Повторения</label>
+                                <input id="new-exercise-reps-{{ workout.id }}" type="number" name="reps" class="form-control form-control-sm" placeholder="Повт." value="12" min="1" max="1000">
                             </div>
                             <div class="col-sm-2">
-                                <input type="number" step="0.5" name="weight_kg" class="form-control form-control-sm" placeholder="Вес кг" value="0" min="0">
+                                <label class="visually-hidden" for="new-exercise-weight-{{ workout.id }}">Вес в килограммах</label>
+                                <input id="new-exercise-weight-{{ workout.id }}" type="number" step="0.1" name="weight_kg" class="form-control form-control-sm" placeholder="Вес кг" value="0" min="0" max="999.9">
                             </div>
                             <div class="col-sm-1 d-grid">
                                 <button type="submit" class="btn btn-outline-primary btn-sm">+</button>
@@ -249,16 +278,19 @@
                     <input type="hidden" name="date" value="{{ selected_date|date:'Y-m-d' }}">
                     <input type="hidden" name="mode" value="{{ view_mode }}">
                     <div class="col-sm-6">
-                        <input type="text" name="title" class="form-control form-control-sm" placeholder="Название (напр. Фулбоди)" required>
+                        <label class="visually-hidden" for="new-workout-title">Название тренировки</label>
+                        <input id="new-workout-title" type="text" name="title" class="form-control form-control-sm" placeholder="Название (напр. Фулбоди)" maxlength="120" required>
                     </div>
                     <div class="col-sm-3">
-                        <input type="time" name="time" class="form-control form-control-sm" value="18:30" required>
+                        <label class="visually-hidden" for="new-workout-time">Время тренировки</label>
+                        <input id="new-workout-time" type="time" name="time" class="form-control form-control-sm" value="18:30" required>
                     </div>
                     <div class="col-sm-3 d-grid">
                         <button type="submit" class="btn btn-primary btn-sm">Добавить</button>
                     </div>
                     <div class="col-12">
-                        <input type="text" name="notes" class="form-control form-control-sm" placeholder="Заметка (опционально)">
+                        <label class="visually-hidden" for="new-workout-notes">Заметка к тренировке</label>
+                        <input id="new-workout-notes" type="text" name="notes" class="form-control form-control-sm" placeholder="Заметка (опционально)">
                     </div>
                 </form>
             </div>
@@ -283,7 +315,7 @@
                                     <div class="text-muted">{{ log.activity_note }}</div>
                                 {% endif %}
                             </div>
-                            <form method="post" action="{% url 'calorie_delete' log.id %}" class="m-0">
+                            <form method="post" action="{% url 'calorie_delete' log.id %}" class="m-0" data-delete-title="запись о {{ log.calories_burned }} ккал">
                                 {% csrf_token %}
                                 <input type="hidden" name="mode" value="{{ view_mode }}">
                                 <button type="submit" class="btn btn-link text-danger p-0 text-decoration-none fw-bold">×</button>
@@ -303,10 +335,12 @@
                         <input type="hidden" name="date" value="{{ selected_date|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}">
                         <input type="hidden" name="mode" value="{{ view_mode }}">
                         <div class="col-sm-5">
-                            <input type="number" name="calories_burned" class="form-control form-control-sm" placeholder="Ккал (напр. 300)" min="1" required>
+                            <label class="visually-hidden" for="calories-burned">Потрачено килокалорий</label>
+                            <input id="calories-burned" type="number" name="calories_burned" class="form-control form-control-sm" placeholder="Ккал (напр. 300)" min="1" max="20000" required>
                         </div>
                         <div class="col-sm-7">
-                            <select name="workout_id" class="form-select form-select-sm">
+                            <label class="visually-hidden" for="calorie-workout">Связанная тренировка</label>
+                            <select id="calorie-workout" name="workout_id" class="form-select form-select-sm">
                                 <option value="">— Общая активность за день —</option>
                                 {% for w in user_workouts_for_select %}
                                     <option value="{{ w.id }}">Тренировка: {{ w.title }}</option>
@@ -314,7 +348,8 @@
                             </select>
                         </div>
                         <div class="col-12">
-                            <input type="text" name="activity_note" class="form-control form-control-sm" placeholder="Комментарий (напр. Прогулка 8000 шагов)">
+                            <label class="visually-hidden" for="activity-note">Комментарий к активности</label>
+                            <input id="activity-note" type="text" name="activity_note" class="form-control form-control-sm" maxlength="150" placeholder="Комментарий (напр. Прогулка 8000 шагов)">
                         </div>
                         <div class="col-12 d-grid">
                             <button type="submit" class="btn btn-danger btn-sm">Записать калории</button>
