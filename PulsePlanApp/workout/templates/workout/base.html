@@ -24,6 +24,14 @@
             <span class="navbar-toggler-icon"></span>
         </button>
         <div class="collapse navbar-collapse" id="pulseplanNavbar">
+            {% if user.is_authenticated %}
+                <div class="navbar-nav me-auto d-flex flex-lg-row align-items-lg-center gap-2 nav-links">
+                    <a href="{% url 'dashboard' %}" class="nav-pill-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}">Календарь</a>
+                    <a href="{% url 'templates_list' %}" class="nav-pill-link {% if request.resolver_match.url_name == 'templates_list' %}active{% endif %}">Шаблоны</a>
+                    <a href="{% url 'exercise_history' %}" class="nav-pill-link {% if request.resolver_match.url_name == 'exercise_history' %}active{% endif %}">История подходов</a>
+                    <a href="{% url 'account_data' %}" class="nav-pill-link {% if request.resolver_match.url_name == 'account_data' %}active{% endif %}">Данные</a>
+                </div>
+            {% endif %}
             <div class="navbar-nav ms-auto d-flex flex-lg-row align-items-lg-center gap-3 nav-account">
             {% if user.is_authenticated %}
                 <span class="nav-user"><span class="nav-user-label">Вы вошли как</span> <strong>{{ user.username }}</strong></span>

@@ -30,7 +30,10 @@
             <span class="stat-icon stat-icon-calories" aria-hidden="true">♨</span>
         </div>
         <div class="stat-value">{{ selected_day_total_calories }} <span>ккал</span></div>
-        <div class="stat-footnote">За неделю: <strong>{{ week_total_calories }} ккал</strong>{% if is_empty_week %} · Пока без активности{% endif %}</div>
+        <div class="stat-footnote">
+            За неделю ({{ week_period_start|date:"d.m.Y" }} — {{ week_period_end|date:"d.m.Y" }}):
+            <strong>{{ week_total_calories }} ккал</strong>{% if is_empty_week %} (нет активности){% endif %}
+        </div>
     </article>
 
     <article class="stat-card">
@@ -144,6 +147,11 @@
                                     <button type="submit" name="status" value="completed" class="status-action {% if workout.status == 'completed' %}selected{% endif %}" aria-label="Отметить выполненной" aria-pressed="{% if workout.status == 'completed' %}true{% else %}false{% endif %}">✓</button>
                                     <button type="submit" name="status" value="skipped" class="status-action {% if workout.status == 'skipped' %}selected{% endif %}" aria-pressed="{% if workout.status == 'skipped' %}true{% else %}false{% endif %}">Пропуск</button>
                                 </form>
+                                <form method="post" action="{% url 'workout_save_as_template' workout.id %}" class="m-0">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="mode" value="{{ view_mode }}">
+                                    <button type="submit" class="icon-button" title="Сохранить как шаблон" aria-label="Сохранить как шаблон">★</button>
+                                </form>
                                 <button type="button" class="icon-button" data-bs-toggle="collapse" data-bs-target="#edit-workout-{{ workout.id }}" aria-label="Редактировать тренировку">✎</button>
                                 <form method="post" action="{% url 'workout_delete' workout.id %}" class="m-0" onsubmit="return confirm('Удалить тренировку «{{ workout.title|escapejs }}»?');">
                                     {% csrf_token %}
@@ -176,9 +184,14 @@
                                     <div class="exercise-item">
                                         <div class="exercise-info">
                                             <span class="exercise-index">{{ forloop.counter|stringformat:"02d" }}</span>
-                                            <div><strong>{{ ex.name }}</strong><span class="exercise-specs">{{ ex.sets }} подхода × {{ ex.reps }} повторений · {% if ex.weight_kg > 0 %}{{ ex.weight_kg }} кг{% else %}свой вес{% endif %}</span></div>
+                                            <div>
+                                                <strong>{{ ex.name }}</strong>
+                                                <span class="exercise-specs">{{ ex.sets }} подхода × {{ ex.reps }} повторений · {% if ex.weight_kg > 0 %}{{ ex.weight_kg }} кг{% else %}свой вес{% endif %}</span>
+                                            </div>
                                         </div>
                                         <div class="exercise-tools">
+                                            <a href="{% url 'exercise_history' %}?exercise={{ ex.name|urlencode }}" class="mini-icon-button" title="История упражнения" aria-label="История {{ ex.name }}">↺</a>
+                                            <button type="button" class="mini-icon-button" data-bs-toggle="collapse" data-bs-target="#add-set-{{ ex.id }}" title="Записать подход" aria-label="Записать подход для {{ ex.name }}">+</button>
                                             <button type="button" class="mini-icon-button" data-bs-toggle="collapse" data-bs-target="#edit-exercise-{{ ex.id }}" aria-label="Редактировать {{ ex.name }}">✎</button>
                                             <form method="post" action="{% url 'exercise_delete' ex.id %}" class="m-0" onsubmit="return confirm('Удалить упражнение «{{ ex.name|escapejs }}»?');">
                                                 {% csrf_token %}
@@ -186,6 +199,34 @@
                                                 <button type="submit" class="mini-icon-button mini-icon-danger" aria-label="Удалить {{ ex.name }}">×</button>
                                             </form>
                                         </div>
+
+                                        {% if ex.set_results.all %}
+                                            <div class="set-results-strip">
+                                                {% for sr in ex.set_results.all %}
+                                                    <span class="set-result-chip">
+                                                        <span><strong>#{{ sr.set_number }}</strong> {{ sr.reps }}×{% if sr.weight_kg > 0 %}{{ sr.weight_kg }}кг{% else %}св.вес{% endif %}{% if sr.notes %} · {{ sr.notes }}{% endif %}</span>
+                                                        <form method="post" action="{% url 'set_result_delete' sr.id %}" class="m-0 d-inline">
+                                                            {% csrf_token %}
+                                                            <input type="hidden" name="mode" value="{{ view_mode }}">
+                                                            <button type="submit" class="set-chip-del" aria-label="Удалить подход {{ sr.set_number }}">×</button>
+                                                        </form>
+                                                    </span>
+                                                {% endfor %}
+                                            </div>
+                                        {% endif %}
+
+                                        <div class="collapse exercise-edit" id="add-set-{{ ex.id }}">
+                                            <form method="post" action="{% url 'set_result_create' ex.id %}" class="form-grid set-result-grid">
+                                                {% csrf_token %}
+                                                <input type="hidden" name="mode" value="{{ view_mode }}">
+                                                <label class="field-group"><span>№ подхода</span><input type="number" name="set_number" class="form-control" placeholder="Авто" min="1" max="100"></label>
+                                                <label class="field-group"><span>Повторения</span><input type="number" name="reps" class="form-control" value="{{ ex.reps }}" min="1" max="1000" required></label>
+                                                <label class="field-group"><span>Вес, кг</span><input type="number" step="0.5" name="weight_kg" class="form-control" value="{{ ex.weight_kg|floatformat:'-1u' }}" min="0" max="999.9" required></label>
+                                                <label class="field-group"><span>Заметка</span><input type="text" name="notes" class="form-control" placeholder="Например, в запас 2 повт." maxlength="150"></label>
+                                                <div class="field-actions"><button type="submit" class="btn btn-primary-action">Записать</button></div>
+                                            </form>
+                                        </div>
+
                                         <div class="collapse exercise-edit" id="edit-exercise-{{ ex.id }}">
                                             <form method="post" action="{% url 'exercise_update' ex.id %}" class="form-grid exercise-edit-grid">
                                                 {% csrf_token %}
@@ -224,6 +265,32 @@
                         <p>Добавь занятие, чтобы составить план на выбранную дату.</p>
                     </div>
                 {% endfor %}
+
+                {% if workout_templates %}
+                <div class="template-quick-block">
+                    <div class="subsection-heading">
+                        <h4>Быстро добавить из шаблона на {{ selected_date|date:"d.m.Y" }}</h4>
+                        <a href="{% url 'templates_list' %}" class="small-link">Все шаблоны →</a>
+                    </div>
+                    <div class="template-quick-list">
+                        {% for tpl in workout_templates %}
+                            <form method="post" action="{% url 'template_apply' tpl.id %}" class="template-quick-form">
+                                {% csrf_token %}
+                                <input type="hidden" name="date" value="{{ selected_date|date:'Y-m-d' }}">
+                                <input type="hidden" name="mode" value="{{ view_mode }}">
+                                <div class="template-quick-info">
+                                    <strong>{{ tpl.title }}</strong>
+                                    <span>{{ tpl.exercises.count }} упр.</span>
+                                </div>
+                                <div class="template-quick-actions">
+                                    <input type="time" name="time" class="form-control form-control-sm" value="18:30" aria-label="Время тренировки">
+                                    <button type="submit" class="btn btn-secondary-action btn-compact">Применить</button>
+                                </div>
+                            </form>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
 
                 <div class="create-workout-block">
                     <div class="create-workout-heading">
@@ -277,7 +344,7 @@
                 <div class="side-form-block">
                     <h3>Добавить активность</h3>
                     {% if is_future_selected %}
-                        <p class="future-note">Нельзя добавить расход калорий за будущую дату ({{ selected_date|date:"d.m.Y" }}).</p>
+                        <p class="future-note">Нельзя добавить запись калорий за будущую дату ({{ selected_date|date:"d.m.Y" }}).</p>
                     {% else %}
                         <form method="post" action="{% url 'calorie_create' %}" class="stacked-form">
                             {% csrf_token %}
@@ -300,7 +367,7 @@
 
         <section class="tip-card">
             <span class="tip-mark" aria-hidden="true">✦</span>
-            <div><strong>Маленькие шаги — большой результат</strong><p>Регулярность важнее идеального плана. Отмечай каждую завершённую тренировку.</p></div>
+            <div><strong>Маленькие шаги — большой результат</strong><p>Регулярность важнее идеального плана. Отмечай каждую завершённую тренировку и фиксируй подходы.</p></div>
         </section>
     </aside>
 </section>

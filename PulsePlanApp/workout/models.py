@@ -121,6 +121,125 @@ class Exercise(models.Model):
         super().save(*args, **kwargs)
 
 
+class ExerciseSetResult(models.Model):
+    """Фактический результат выполненного подхода в упражнении."""
+
+    exercise = models.ForeignKey(
+        Exercise,
+        on_delete=models.CASCADE,
+        related_name="set_results",
+        verbose_name="Упражнение",
+    )
+    set_number = models.PositiveSmallIntegerField(
+        "Номер подхода",
+        validators=[MinValueValidator(1), MaxValueValidator(100)],
+    )
+    reps = models.PositiveSmallIntegerField(
+        "Фактические повторения",
+        validators=[MinValueValidator(1), MaxValueValidator(1000)],
+    )
+    weight_kg = models.DecimalField(
+        "Фактический вес (кг)",
+        max_digits=5,
+        decimal_places=1,
+        default=Decimal("0.0"),
+        validators=[MinValueValidator(Decimal("0.0")), MaxValueValidator(Decimal("999.9"))],
+    )
+    notes = models.CharField("Комментарий", max_length=150, blank=True)
+    recorded_at = models.DateTimeField("Время записи", default=timezone.now, db_index=True)
+
+    class Meta:
+        verbose_name = "Результат подхода"
+        verbose_name_plural = "Результаты подходов"
+        ordering = ["set_number", "recorded_at", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["exercise", "set_number"],
+                name="unique_set_number_per_exercise",
+            )
+        ]
+
+    def __str__(self) -> str:
+        weight_label = f"{self.weight_kg} кг" if self.weight_kg > 0 else "свой вес"
+        return f"{self.exercise.name} — подход {self.set_number}: {self.reps} повт. ({weight_label})"
+
+    @property
+    def volume(self) -> Decimal:
+        return self.weight_kg * self.reps
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+
+class WorkoutTemplate(models.Model):
+    """Пользовательский шаблон тренировки для быстрого планирования."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="workout_templates",
+        verbose_name="Пользователь",
+    )
+    title = models.CharField("Название шаблона", max_length=120)
+    notes = models.TextField("Заметки", blank=True)
+    created_at = models.DateTimeField("Создано", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Шаблон тренировки"
+        verbose_name_plural = "Шаблоны тренировок"
+        ordering = ["-created_at", "id"]
+
+    def __str__(self) -> str:
+        return self.title
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+
+class TemplateExercise(models.Model):
+    """Упражнение внутри шаблона тренировки."""
+
+    template = models.ForeignKey(
+        WorkoutTemplate,
+        on_delete=models.CASCADE,
+        related_name="exercises",
+        verbose_name="Шаблон тренировки",
+    )
+    name = models.CharField("Название упражнения", max_length=120)
+    sets = models.PositiveSmallIntegerField(
+        "Подходы",
+        default=3,
+        validators=[MinValueValidator(1), MaxValueValidator(100)],
+    )
+    reps = models.PositiveSmallIntegerField(
+        "Повторения",
+        default=10,
+        validators=[MinValueValidator(1), MaxValueValidator(1000)],
+    )
+    weight_kg = models.DecimalField(
+        "Вес (кг)",
+        max_digits=5,
+        decimal_places=1,
+        default=Decimal("0.0"),
+        validators=[MinValueValidator(Decimal("0.0")), MaxValueValidator(Decimal("999.9"))],
+    )
+    order = models.PositiveSmallIntegerField("Порядок", default=1)
+
+    class Meta:
+        verbose_name = "Упражнение шаблона"
+        verbose_name_plural = "Упражнения шаблонов"
+        ordering = ["order", "id"]
+
+    def __str__(self) -> str:
+        return f"{self.name}: {self.sets}×{self.reps} ({self.weight_kg} кг)"
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+
 class DailyCalories(models.Model):
     """Запись о потраченных калориях (по тренировке или общей активности за день)."""
 

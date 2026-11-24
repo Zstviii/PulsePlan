@@ -1,0 +1,93 @@
+{% extends "workout/base.html" %}
+{% block title %}Управление данными — PulsePlan{% endblock %}
+{% block content %}
+
+<section class="dashboard-intro">
+    <div>
+        <p class="eyebrow">ПРИВАТНОСТЬ И ДАННЫЕ</p>
+        <h1 class="page-title">Экспорт и удаление данных</h1>
+        <p class="page-subtitle">Выгружай резервные копии тренировок или безопасно очищай свой профиль.</p>
+    </div>
+    <a href="{% url 'dashboard' %}" class="btn btn-secondary-action">← В календарь</a>
+</section>
+
+<section class="stats-grid" aria-label="Объём данных профиля">
+    <article class="stat-card">
+        <div class="stat-topline"><span class="stat-label">Тренировки</span></div>
+        <div class="stat-value">{{ workouts_count }}</div>
+        <div class="stat-footnote">Шаблонов: <strong>{{ templates_count }}</strong></div>
+    </article>
+    <article class="stat-card">
+        <div class="stat-topline"><span class="stat-label">Записи подходов</span></div>
+        <div class="stat-value">{{ set_results_count }}</div>
+        <div class="stat-footnote">Фактические результаты в истории</div>
+    </article>
+    <article class="stat-card">
+        <div class="stat-topline"><span class="stat-label">Записи калорий</span></div>
+        <div class="stat-value">{{ calories_count }}</div>
+        <div class="stat-footnote">Аккаунт: <strong>{{ user.username }}</strong></div>
+    </article>
+</section>
+
+<section class="content-grid">
+    <div class="content-main">
+        <section class="panel mb-4">
+            <div class="panel-heading">
+                <div>
+                    <p class="eyebrow">РЕЗЕРВНАЯ КОПИЯ</p>
+                    <h2 class="section-title">Экспорт пользовательских данных</h2>
+                </div>
+            </div>
+            <div class="panel-body">
+                <p class="mb-3 text-muted">
+                    Скачай все свои тренировки, упражнения, историю подходов, шаблоны и записи калорий.
+                    В экспорт попадают только данные аккаунта <strong>{{ user.username }}</strong>.
+                </p>
+                <div class="d-flex flex-wrap gap-3">
+                    <a href="{% url 'export_user_data' %}?format=json" class="btn btn-primary-action">Скачать JSON (полный архив)</a>
+                    <a href="{% url 'export_user_data' %}?format=csv" class="btn btn-secondary-action">Скачать CSV (для Excel)</a>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <aside class="content-side">
+        <section class="panel danger-panel">
+            <div class="panel-heading">
+                <div>
+                    <p class="eyebrow danger-eyebrow">ОПАСНАЯ ЗОНА</p>
+                    <h2 class="section-title">Безопасное удаление данных</h2>
+                </div>
+            </div>
+            <div class="panel-body">
+                <p class="small text-muted mb-3">
+                    Действие необратимо. Перед удалением рекомендуется скачать резервную копию в JSON или CSV.
+                    Для защиты от случайного удаления необходимо подтвердить пароль и ввести слово <strong>УДАЛИТЬ</strong>.
+                </p>
+                <form method="post" action="{% url 'delete_user_data' %}" class="stacked-form"
+                      onsubmit="return confirm('Вы уверены? Удалённые данные невозможно восстановить.');">
+                    {% csrf_token %}
+                    <label class="field-group">
+                        <span>Что удалить</span>
+                        <select name="scope" class="form-select" required>
+                            {% for val, label in delete_form.fields.scope.choices %}
+                                <option value="{{ val }}">{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                    <label class="field-group">
+                        <span>Текущий пароль</span>
+                        <input type="password" name="password" class="form-control" autocomplete="current-password" required>
+                    </label>
+                    <label class="field-group">
+                        <span>Введите слово <strong>УДАЛИТЬ</strong></span>
+                        <input type="text" name="confirmation" class="form-control" placeholder="УДАЛИТЬ" required>
+                    </label>
+                    <button type="submit" class="btn btn-danger-action w-100">Подтвердить удаление</button>
+                </form>
+            </div>
+        </section>
+    </aside>
+</section>
+
+{% endblock %}
