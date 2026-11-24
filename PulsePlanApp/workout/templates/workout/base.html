@@ -44,6 +44,21 @@
             .form-control-sm,
             .form-select-sm { min-height: 2.75rem; }
         }
+                :focus-visible {
+            outline: 3px solid #2563eb !important;
+            outline-offset: 2px !important;
+            box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.25) !important;
+        }
+        .navbar-dark :focus-visible {
+            outline: 3px solid #facc15 !important;
+            outline-offset: 2px !important;
+            box-shadow: none !important;
+        }
+        .cal-day-link:focus-visible,
+        .cal-workout-item a:focus-visible {
+            border-radius: 4px;
+            background-color: rgba(37, 99, 235, 0.12);
+        }
     </style>
 </head>
 <body>

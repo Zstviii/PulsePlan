@@ -2,6 +2,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, time, timedelta
 from unittest.mock import patch
+from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
@@ -13,7 +14,15 @@ from django.utils import timezone
 from seed_pulseplan import DEMO_USERNAME, run_seed
 
 from .forms import DailyCaloriesForm, ExerciseForm, WorkoutForm
-from .models import DailyCalories, Exercise, Workout
+from .models import (
+    DailyCalories,
+    Exercise,
+    ExerciseResult,
+    TemplateExercise,
+    Workout,
+    WorkoutTemplate,
+)
+
 
 User = get_user_model()
 
@@ -1145,3 +1154,256 @@ class StatisticsLabelsPeriodMatchTests(TestCase):
         next_resp = self.client.get(next_url)
         self.assertContains(next_resp, "За неделю (19.10.2026 — 25.10.2026):")
         self.assertContains(next_resp, "<strong>450 ккал</strong>", html=True)
+class RemainingQaTasksTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="qa_tasks_user", password="Password123!"
+        )
+        self.client.force_login(self.user)
+        self.tz = timezone.get_current_timezone()
+
+    def test_midnight_workouts_on_week_boundary_and_calorie_totals(self):
+        sunday_end = date(2026, 10, 18)
+        monday_start = date(2026, 10, 19)
+
+        w_sun = Workout.objects.create(
+            user=self.user,
+            title="Поздняя воскресная",
+            scheduled_at=timezone.make_aware(
+                datetime.combine(sunday_end, time(23, 59, 59)), self.tz
+            ),
+            status=Workout.Status.COMPLETED,
+        )
+        w_mon = Workout.objects.create(
+            user=self.user,
+            title="Полночная понедельника",
+            scheduled_at=timezone.make_aware(
+                datetime.combine(monday_start, time(0, 0, 0)), self.tz
+            ),
+            status=Workout.Status.COMPLETED,
+        )
+        DailyCalories.objects.create(user=self.user, workout=w_sun, calories_burned=220)
+        DailyCalories.objects.create(user=self.user, workout=w_mon, calories_burned=380)
+
+        resp_sun = self.client.get(
+            reverse("dashboard"), {"date": sunday_end.isoformat(), "mode": "week"}
+        )
+        self.assertEqual(list(resp_sun.context["selected_day_workouts"]), [w_sun])
+        self.assertEqual(resp_sun.context["week_total_calories"], 220)
+
+        resp_mon = self.client.get(
+            reverse("dashboard"), {"date": monday_start.isoformat(), "mode": "week"}
+        )
+        self.assertEqual(list(resp_mon.context["selected_day_workouts"]), [w_mon])
+        self.assertEqual(resp_mon.context["week_total_calories"], 380)
+
+    def test_forms_validation_edge_cases(self):
+        wf_blank = WorkoutForm(data={"title": "   \t  "})
+        self.assertFalse(wf_blank.is_valid())
+        self.assertIn("title", wf_blank.errors)
+
+        wf_seconds = WorkoutForm(
+            data={"title": "Интервалы", "date": "2026-10-15", "time": "07:15:00"}
+        )
+        self.assertTrue(wf_seconds.is_valid())
+        w = wf_seconds.save(user=self.user)
+        self.assertEqual(timezone.localtime(w.scheduled_at).time(), time(7, 15))
+
+        ef_invalid = ExerciseForm(
+            data={"name": "Жим", "sets": -1, "reps": "abc", "weight_kg": "-0.5"}
+        )
+        self.assertFalse(ef_invalid.is_valid())
+        self.assertIn("sets", ef_invalid.errors)
+        self.assertIn("reps", ef_invalid.errors)
+        self.assertIn("weight_kg", ef_invalid.errors)
+
+        cf_min = DailyCaloriesForm(
+            data={"date": "2026-10-15", "calories_burned": 1, "activity_note": "Разминка"}
+        )
+        self.assertTrue(cf_min.is_valid())
+
+        cf_zero = DailyCaloriesForm(data={"date": "2026-10-15", "calories_burned": 0})
+        self.assertFalse(cf_zero.is_valid())
+        self.assertIn("calories_burned", cf_zero.errors)
+
+        cf_future = DailyCaloriesForm(
+            data={
+                "date": (timezone.localdate() + timedelta(days=1)).isoformat(),
+                "calories_burned": 250,
+            }
+        )
+        self.assertFalse(cf_future.is_valid())
+
+    def test_status_non_color_markers_and_focus_visible_styles(self):
+        target_day = date(2026, 10, 15)
+        for idx, (status_val, title) in enumerate(
+            [
+                (Workout.Status.PLANNED, "План-тренировка"),
+                (Workout.Status.COMPLETED, "Готовая-тренировка"),
+                (Workout.Status.SKIPPED, "Пропуск-тренировка"),
+            ]
+        ):
+            Workout.objects.create(
+                user=self.user,
+                title=title,
+                scheduled_at=timezone.make_aware(
+                    datetime.combine(target_day, time(10 + idx, 0)), self.tz
+                ),
+                status=status_val,
+            )
+
+        response = self.client.get(
+            reverse("dashboard"), {"date": target_day.isoformat(), "mode": "week"}
+        )
+        self.assertEqual(response.status_code, 200)
+
+        self.assertContains(response, "◷")
+        self.assertContains(response, "✓")
+        self.assertContains(response, "✕")
+        self.assertContains(response, "Запланирована: 10:00 План-тренировка")
+        self.assertContains(response, "Выполнена: 11:00 Готовая-тренировка")
+        self.assertContains(response, "Пропущена: 12:00 Пропуск-тренировка")
+
+        self.assertContains(response, ":focus-visible")
+
+class IntegrationAndFeaturesTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="integration_qa_user", password="Password123!"
+        )
+        self.other_user = User.objects.create_user(
+            username="other_qa_user", password="Password123!"
+        )
+        self.client.force_login(self.user)
+        self.tz = timezone.get_current_timezone()
+
+    def test_europe_kirov_timezone_configuration_and_conversion(self):
+        from django.conf import settings as django_settings
+
+        self.assertEqual(django_settings.TIME_ZONE, "Europe/Kirov")
+        self.assertTrue(django_settings.USE_TZ)
+        self.assertEqual(timezone.get_current_timezone_name(), "Europe/Kirov")
+
+        utc_dt = datetime(2026, 10, 15, 21, 30, tzinfo=timezone.UTC)
+        w = Workout.objects.create(
+            user=self.user,
+            title="Ночная по UTC, утренняя по Кирову",
+            scheduled_at=utc_dt,
+        )
+        local_dt = timezone.localtime(w.scheduled_at)
+        self.assertEqual(local_dt.date(), date(2026, 10, 16))
+        self.assertEqual(local_dt.hour, 0)
+        self.assertEqual(local_dt.minute, 30)
+
+    def test_exercise_result_history_creation_and_view(self):
+        workout = Workout.objects.create(
+            user=self.user,
+            title="Силовая",
+            scheduled_at=timezone.make_aware(datetime(2026, 10, 15, 18, 0), self.tz),
+        )
+        exercise = Exercise.objects.create(
+            workout=workout, name="Жим лёжа", sets=3, reps=10, weight_kg=Decimal("60.0")
+        )
+
+        history_url = reverse("exercise_history", args=[exercise.id])
+        add_result_url = reverse("exercise_result_add", args=[exercise.id])
+
+        resp_get = self.client.get(history_url)
+        self.assertEqual(resp_get.status_code, 200)
+
+        resp_post = self.client.post(
+            add_result_url,
+            data={"set_number": 1, "reps": 10, "weight_kg": "62.5"},
+        )
+        self.assertIn(resp_post.status_code, (200, 302))
+        self.assertTrue(
+            ExerciseResult.objects.filter(
+                user=self.user,
+                exercise=exercise,
+                set_number=1,
+                reps=10,
+                weight_kg=Decimal("62.5"),
+            ).exists()
+        )
+
+        resp_after = self.client.get(history_url)
+        self.assertContains(resp_after, "62,5 кг")
+
+    def test_workout_template_creation_and_usage(self):
+        resp_create = self.client.post(
+            reverse("template_create"),
+            data={"name": "Базовый фулбоди", "notes": "Разминка 10 мин"},
+        )
+        self.assertIn(resp_create.status_code, (200, 302))
+        template = WorkoutTemplate.objects.get(user=self.user, name="Базовый фулбоди")
+
+        resp_add_ex = self.client.post(
+            reverse("template_exercise_add", args=[template.id]),
+            data={"name": "Приседания", "sets": 4, "reps": 12, "weight_kg": "50.0"},
+        )
+        self.assertIn(resp_add_ex.status_code, (200, 302))
+        self.assertEqual(template.exercises.count(), 1)
+
+        target_date = "2026-10-20"
+        resp_use = self.client.post(
+            reverse("template_use", args=[template.id]),
+            data={"date": target_date, "time": "19:00"},
+        )
+        self.assertIn(resp_use.status_code, (200, 302))
+
+        created_workout = Workout.objects.filter(
+            user=self.user, title="Базовый фулбоди"
+        ).first()
+        self.assertIsNotNone(created_workout)
+        self.assertEqual(created_workout.exercises.count(), 1)
+        self.assertEqual(created_workout.exercises.first().name, "Приседания")
+
+    def test_export_user_data_contains_only_own_records(self):
+        Workout.objects.create(
+            user=self.user,
+            title="Моя экспортная тренировка",
+            scheduled_at=timezone.make_aware(datetime(2026, 10, 15, 17, 0), self.tz),
+        )
+        Workout.objects.create(
+            user=self.other_user,
+            title="Чужая секретная тренировка",
+            scheduled_at=timezone.make_aware(datetime(2026, 10, 15, 17, 0), self.tz),
+        )
+
+        page_resp = self.client.get(reverse("export_data"))
+        self.assertEqual(page_resp.status_code, 200)
+
+        export_resp = self.client.post(
+            reverse("export_data"),
+            data={"workouts": "on", "format": "json"},
+        )
+        self.assertEqual(export_resp.status_code, 200)
+        body = export_resp.content.decode("utf-8", errors="replace")
+        self.assertIn("Моя экспортная тренировка", body)
+        self.assertNotIn("Чужая секретная тренировка", body)
+
+    def test_cascade_deletion_leaves_no_orphan_user_records(self):
+        w = Workout.objects.create(
+            user=self.user,
+            title="Тренировка на удаление",
+            scheduled_at=timezone.make_aware(datetime(2026, 10, 15, 15, 0), self.tz),
+            status=Workout.Status.COMPLETED,
+        )
+        ex = Exercise.objects.create(workout=w, name="Подтягивания", sets=3, reps=8)
+        ExerciseResult.objects.create(
+            user=self.user, workout=w, exercise=ex, exercise_name=ex.name, set_number=1, reps=8
+        )
+        DailyCalories.objects.create(user=self.user, workout=w, calories_burned=310)
+
+        tpl = WorkoutTemplate.objects.create(user=self.user, name="Шаблон на удаление")
+        TemplateExercise.objects.create(template=tpl, name="Отжимания", sets=3, reps=15)
+
+        user_id = self.user.id
+        self.user.delete()
+
+        self.assertFalse(Workout.objects.filter(user_id=user_id).exists())
+        self.assertFalse(Exercise.objects.filter(workout__user_id=user_id).exists())
+        self.assertFalse(ExerciseResult.objects.filter(user_id=user_id).exists())
+        self.assertFalse(DailyCalories.objects.filter(user_id=user_id).exists())
+        self.assertFalse(WorkoutTemplate.objects.filter(user_id=user_id).exists())
+        self.assertFalse(TemplateExercise.objects.filter(template__user_id=user_id).exists())

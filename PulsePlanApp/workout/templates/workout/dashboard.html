@@ -61,12 +61,13 @@
     </div>
 
     <div class="calendar-legend d-flex flex-wrap gap-3 px-3 py-2 border-bottom" aria-label="Легенда календаря">
-        <span class="calendar-legend-item"><span class="calendar-legend-swatch legend-planned" aria-hidden="true"></span>Запланирована</span>
-        <span class="calendar-legend-item"><span class="calendar-legend-swatch legend-completed" aria-hidden="true"></span>Выполнена</span>
-        <span class="calendar-legend-item"><span class="calendar-legend-swatch legend-skipped" aria-hidden="true"></span>Пропущена</span>
+        <span class="calendar-legend-item"><span class="calendar-legend-swatch legend-planned d-inline-flex align-items-center justify-content-center fw-bold" aria-hidden="true">◷</span>Запланирована</span>
+        <span class="calendar-legend-item"><span class="calendar-legend-swatch legend-completed d-inline-flex align-items-center justify-content-center fw-bold" aria-hidden="true">✓</span>Выполнена</span>
+        <span class="calendar-legend-item"><span class="calendar-legend-swatch legend-skipped d-inline-flex align-items-center justify-content-center fw-bold" aria-hidden="true">✕</span>Пропущена</span>
         <span class="calendar-legend-item"><span class="calendar-legend-swatch legend-selected" aria-hidden="true"></span>Выбранный день</span>
         <span class="calendar-legend-item"><span class="calendar-legend-swatch legend-today" aria-hidden="true"></span>Сегодня</span>
     </div>
+
 
     <div class="table-responsive">
         <table class="table table-bordered mb-0 calendar-table">
@@ -104,13 +105,16 @@
                         </div>
 
                         {% for w in day.workouts %}
-                            <div class="cal-workout-item p-1 mb-1 rounded small {% if w.status == 'completed' %}bg-success-subtle text-success-emphasis{% elif w.status == 'skipped' %}bg-secondary-subtle text-secondary-emphasis text-decoration-line-through{% else %}bg-primary-subtle text-primary-emphasis{% endif %}">
-                                <a href="?date={{ day.date|date:'Y-m-d' }}&mode={{ view_mode }}&day={{ anchor_day }}" class="text-decoration-none text-reset d-block">
+                            <div class="cal-workout-item p-1 mb-1 rounded small {% if w.status == 'completed' %}bg-success-subtle text-success-emphasis border border-success-subtle{% elif w.status == 'skipped' %}bg-secondary-subtle text-secondary-emphasis text-decoration-line-through border border-secondary-subtle{% else %}bg-primary-subtle text-primary-emphasis border border-primary-subtle{% endif %}">
+                                <a href="?date={{ day.date|date:'Y-m-d' }}&mode={{ view_mode }}&day={{ anchor_day }}"
+                                   class="text-decoration-none text-reset d-block"
+                                   aria-label="{{ w.get_status_display }}: {{ w.scheduled_at|date:'H:i' }} {{ w.title }}">
                                     <strong>{{ w.scheduled_at|date:"H:i" }}</strong> {{ w.title }}
-                                    {% if w.status == 'completed' %}✓{% elif w.status == 'skipped' %}✕{% endif %}
+                                    <span class="fw-bold ms-1" aria-hidden="true">{% if w.status == 'completed' %}✓{% elif w.status == 'skipped' %}✕{% else %}◷{% endif %}</span>
                                 </a>
                             </div>
                         {% empty %}
+
                             <div class="text-muted small opacity-50">—</div>
                         {% endfor %}
                     </td>
