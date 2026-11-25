@@ -1,4 +1,5 @@
 import os
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, time, timedelta
 from unittest.mock import patch
@@ -15,7 +16,13 @@ from django.urls import reverse
 from django.utils import timezone
 from seed_pulseplan import DEMO_USERNAME, run_seed
 
-from .forms import DailyCaloriesForm, ExerciseForm, WorkoutForm
+from .forms import (
+    DailyCaloriesForm,
+    ExerciseForm,
+    ExerciseResultForm,
+    TemplateUseForm,
+    WorkoutForm,
+)
 from .models import (
     DailyCalories,
     Exercise,
@@ -24,9 +31,27 @@ from .models import (
     Workout,
     WorkoutTemplate,
 )
+from .views import _safe_csv_cell
+from .templatetags.workout_extras import exercise_count, workout_count
 
 
 User = get_user_model()
+
+
+class RussianExerciseCountTests(TestCase):
+    def test_exercise_count_uses_russian_plural_forms(self):
+        for count, expected in (
+            (1, "1 упражнение"),
+            (2, "2 упражнения"),
+            (5, "5 упражнений"),
+            (11, "11 упражнений"),
+            (21, "21 упражнение"),
+        ):
+            with self.subTest(count=count):
+                self.assertEqual(exercise_count(count), expected)
+        self.assertEqual(workout_count(1), "1 тренировка")
+        self.assertEqual(workout_count(2), "2 тренировки")
+        self.assertEqual(workout_count(11), "11 тренировок")
 
 
 class WorkoutOwnershipTests(TestCase):
@@ -318,13 +343,24 @@ class WorkoutOwnershipTests(TestCase):
 
     def test_owner_can_delete_exercise_without_deleting_workout(self):
         exercise = self.alice_workout.exercises.create(name="Присед")
+        other_exercise = self.alice_workout.exercises.create(name="Жим")
         self.client.force_login(self.alice)
 
         response = self.client.post(reverse("exercise_delete", args=[exercise.id]))
 
         self.assertEqual(response.status_code, 302)
         self.assertFalse(Exercise.objects.filter(pk=exercise.pk).exists())
+        self.assertTrue(Exercise.objects.filter(pk=other_exercise.pk).exists())
         self.assertTrue(Workout.objects.filter(pk=self.alice_workout.pk).exists())
+
+    def test_exercise_delete_get_and_head_are_read_only(self):
+        exercise = self.alice_workout.exercises.create(name="Присед")
+        self.client.force_login(self.alice)
+        url = reverse("exercise_delete", args=[exercise.pk])
+
+        for response in (self.client.get(url), self.client.head(url)):
+            self.assertEqual(response.status_code, 405)
+            self.assertTrue(Exercise.objects.filter(pk=exercise.pk).exists())
 
     def test_exercise_model_save_validates_numeric_values(self):
         exercise = self.alice_workout.exercises.model(
@@ -412,6 +448,47 @@ class CalendarAndSeedTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["selected_date"], timezone.localdate())
+
+    def test_out_of_range_dates_are_bounded_and_navigation_is_disabled(self):
+        for raw in ("0001-01-01", "9999-12-31"):
+            response = self.client.get(
+                reverse("dashboard"), {"date": raw, "mode": "month"}
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.context["selected_date"], timezone.localdate())
+
+        lower = self.client.get(
+            reverse("dashboard"), {"date": "1900-01-01", "mode": "week"}
+        )
+        self.assertFalse(lower.context["can_navigate_previous"])
+        upper = self.client.get(
+            reverse("dashboard"), {"date": "2100-12-31", "mode": "month"}
+        )
+        self.assertFalse(upper.context["can_navigate_next"])
+
+        for raw in ("0001-01-01", "9999-12-31"):
+            workout_form = WorkoutForm(
+                data={"title": "Проверка", "date": raw, "time": "10:00"}
+            )
+            template_form = TemplateUseForm(
+                data={
+                    "submission_token": str(uuid.uuid4()),
+                    "date": raw,
+                    "time": "10:00",
+                }
+            )
+            self.assertFalse(workout_form.is_valid())
+            self.assertIn("date", workout_form.errors)
+            self.assertFalse(template_form.is_valid())
+            self.assertIn("date", template_form.errors)
+
+    def test_calendar_navigation_and_full_cell_target_are_rendered(self):
+        response = self.client.get(
+            reverse("dashboard"), {"date": "2026-11-25", "mode": "month"}
+        )
+        self.assertContains(response, "data-calendar-navigation")
+        self.assertContains(response, "data-calendar-cell")
+        self.assertContains(response, "role=\"link\"")
 
     def test_cannot_add_calories_for_future_date(self):
         future_date = timezone.localdate() + timedelta(days=2)
@@ -1305,6 +1382,7 @@ class IntegrationAndFeaturesTests(TestCase):
             user=self.user,
             title="Силовая",
             scheduled_at=timezone.make_aware(datetime(2026, 10, 15, 18, 0), self.tz),
+            status=Workout.Status.COMPLETED,
         )
         exercise = Exercise.objects.create(
             workout=workout, name="Жим лёжа", sets=3, reps=10, weight_kg=Decimal("60.0")
@@ -1334,9 +1412,84 @@ class IntegrationAndFeaturesTests(TestCase):
         resp_after = self.client.get(history_url)
         self.assertContains(resp_after, "62,5 кг")
 
+    def test_exercise_result_post_is_idempotent_and_updates_same_set(self):
+        workout = Workout.objects.create(
+            user=self.user, title="Выполненная", status=Workout.Status.COMPLETED
+        )
+        exercise = Exercise.objects.create(workout=workout, name="Жим")
+        url = reverse("exercise_result_add", args=[exercise.pk])
+
+        self.client.post(
+            url, {"set_number": 1, "reps": 8, "weight_kg": "50.0"}
+        )
+        response = self.client.post(
+            url, {"set_number": 1, "reps": 10, "weight_kg": "52.5"}
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(ExerciseResult.objects.filter(exercise=exercise).count(), 1)
+        result = ExerciseResult.objects.get(exercise=exercise)
+        self.assertEqual(result.reps, 10)
+        self.assertEqual(result.weight_kg, Decimal("52.5"))
+
+    def test_exercise_result_validation_and_workout_status(self):
+        zero_sets = ExerciseResultForm(
+            data={"set_number": 0, "reps": 1, "weight_kg": "0.0"}
+        )
+        self.assertFalse(zero_sets.is_valid())
+        form = ExerciseResultForm(
+            data={"set_number": 101, "reps": 1001, "weight_kg": "1000.0"}
+        )
+        self.assertFalse(form.is_valid())
+        self.assertEqual(set(form.errors), {"set_number", "reps", "weight_kg"})
+        max_values = ExerciseResultForm(
+            data={"set_number": 100, "reps": 1000, "weight_kg": "999.9"}
+        )
+        self.assertTrue(max_values.is_valid())
+
+        completed = Workout.objects.create(
+            user=self.user, title="Проверка полей", status=Workout.Status.COMPLETED
+        )
+        completed_exercise = Exercise.objects.create(workout=completed, name="Жим")
+        invalid_response = self.client.post(
+            reverse("exercise_result_add", args=[completed_exercise.pk]),
+            {"set_number": 101, "reps": 1001, "weight_kg": "1000.0"},
+        )
+        self.assertEqual(invalid_response.status_code, 200)
+        self.assertContains(invalid_response, 'aria-invalid="true"')
+        self.assertContains(invalid_response, "autofocus")
+        self.assertContains(invalid_response, 'value="101"')
+        self.assertContains(invalid_response, 'value="1001"')
+        self.assertContains(invalid_response, 'value="1000.0"')
+
+        workout = Workout.objects.create(
+            user=self.user, title="Запланированная", status=Workout.Status.PLANNED
+        )
+        exercise = Exercise.objects.create(workout=workout, name="Тяга")
+        response = self.client.post(
+            reverse("exercise_result_add", args=[exercise.pk]),
+            {"set_number": 1, "reps": 5, "weight_kg": "10.0"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "только для выполненной тренировки")
+        self.assertFalse(ExerciseResult.objects.filter(exercise=exercise).exists())
+        with self.assertRaises(ValidationError):
+            ExerciseResult.objects.create(
+                user=self.user,
+                workout=workout,
+                exercise=exercise,
+                exercise_name=exercise.name,
+                set_number=1,
+                reps=5,
+            )
+
     def test_exercise_result_rejects_foreign_workout_or_exercise(self):
-        own_workout = Workout.objects.create(user=self.user, title="Моя тренировка")
-        foreign_workout = Workout.objects.create(user=self.other_user, title="Чужая тренировка")
+        own_workout = Workout.objects.create(
+            user=self.user, title="Моя тренировка", status=Workout.Status.COMPLETED
+        )
+        foreign_workout = Workout.objects.create(
+            user=self.other_user, title="Чужая тренировка", status=Workout.Status.COMPLETED
+        )
         own_exercise = Exercise.objects.create(workout=own_workout, name="Жим")
         foreign_exercise = Exercise.objects.create(workout=foreign_workout, name="Тяга")
 
@@ -1361,7 +1514,9 @@ class IntegrationAndFeaturesTests(TestCase):
         self.assertEqual(own_exercise.workout_id, own_workout.id)
 
     def test_exercise_result_survives_exercise_deletion(self):
-        workout = Workout.objects.create(user=self.user, title="История")
+        workout = Workout.objects.create(
+            user=self.user, title="История", status=Workout.Status.COMPLETED
+        )
         exercise = Exercise.objects.create(workout=workout, name="Жим")
         result = ExerciseResult.objects.create(
             user=self.user, workout=workout, exercise=exercise,
@@ -1385,9 +1540,19 @@ class IntegrationAndFeaturesTests(TestCase):
         )
         self.assertIn(resp_create.status_code, (200, 302))
         template = WorkoutTemplate.objects.get(user=self.user, name="Базовый фулбоди")
+        template_list_response = self.client.get(reverse("template_list"))
+        self.assertEqual(template_list_response.status_code, 200)
+        self.assertContains(template_list_response, "0 упражнений")
 
         use_url = reverse("template_use", args=[template.id])
-        self.assertEqual(self.client.get(use_url).status_code, 200)
+        self.assertEqual(self.client.head(use_url).status_code, 405)
+        get_response = self.client.get(use_url)
+        self.assertEqual(get_response.status_code, 200)
+        submission_token = str(
+            get_response.context["form"]["submission_token"].value()
+        )
+        self.assertEqual(get_response.context["form"]["date"].value(), None)
+        self.assertEqual(get_response.context["form"]["time"].value(), None)
 
         resp_add_ex = self.client.post(
             reverse("template_exercise_add", args=[template.id]),
@@ -1399,9 +1564,13 @@ class IntegrationAndFeaturesTests(TestCase):
         target_date = "2026-10-20"
         resp_use = self.client.post(
             reverse("template_use", args=[template.id]),
-            data={"date": target_date, "time": "19:00"},
+            data={
+                "date": target_date,
+                "time": "19:00",
+                "submission_token": submission_token,
+            },
         )
-        self.assertIn(resp_use.status_code, (200, 302))
+        self.assertEqual(resp_use.status_code, 302)
 
         created_workout = Workout.objects.filter(
             user=self.user, title="Базовый фулбоди"
@@ -1417,14 +1586,53 @@ class IntegrationAndFeaturesTests(TestCase):
             timezone.localtime(created_workout.scheduled_at),
             timezone.make_aware(datetime(2026, 10, 20, 19, 0), self.tz),
         )
+        template_exercise = template.exercises.get()
+        template_exercise.name = "Изменённый шаблон"
+        template_exercise.save()
+        created_exercise.refresh_from_db()
+        self.assertEqual(created_exercise.name, "Приседания")
 
-        invalid_use = self.client.post(
-            use_url, data={"date": "invalid-date", "time": "25:90"}
+        repeated_use = self.client.post(
+            use_url,
+            data={
+                "date": target_date,
+                "time": "19:00",
+                "submission_token": submission_token,
+            },
         )
-        self.assertEqual(invalid_use.status_code, 200)
+        self.assertEqual(repeated_use.status_code, 302)
         self.assertEqual(
             Workout.objects.filter(user=self.user, title="Базовый фулбоди").count(), 1
         )
+
+        invalid_use = self.client.post(
+            use_url,
+            data={
+                "date": "invalid-date",
+                "time": "25:90",
+                "submission_token": str(uuid.uuid4()),
+            },
+        )
+        self.assertEqual(invalid_use.status_code, 200)
+        self.assertEqual(invalid_use.context["form"]["date"].value(), "invalid-date")
+        self.assertEqual(invalid_use.context["form"]["time"].value(), "25:90")
+        self.assertEqual(
+            Workout.objects.filter(user=self.user, title="Базовый фулбоди").count(), 1
+        )
+
+    def test_using_empty_template_shows_error_without_creating_workout(self):
+        template = WorkoutTemplate.objects.create(user=self.user, name="Пустой")
+        response = self.client.post(
+            reverse("template_use", args=[template.pk]),
+            data={
+                "date": "2026-11-25",
+                "time": "19:00",
+                "submission_token": str(uuid.uuid4()),
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "в шаблоне нет упражнений")
+        self.assertEqual(Workout.objects.filter(user=self.user).count(), 0)
 
     def test_template_views_are_scoped_to_the_owner(self):
         template = WorkoutTemplate.objects.create(
@@ -1500,6 +1708,7 @@ class IntegrationAndFeaturesTests(TestCase):
         workout = Workout.objects.create(
             user=self.user,
             title="Мой архив",
+            notes='=HYPERLINK("https://example.invalid"; "опасное")\nТренировка "А"',
             scheduled_at=timezone.make_aware(datetime(2026, 10, 15, 17, 0), self.tz),
             status=Workout.Status.COMPLETED,
         )
@@ -1543,8 +1752,16 @@ class IntegrationAndFeaturesTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("attachment;", response["Content-Disposition"])
         payload = response.json()
+        self.assertEqual(payload["schema_version"], 1)
         self.assertEqual(payload["user"]["username"], self.user.username)
         self.assertEqual(payload["workouts"][0]["exercises"][0]["name"], "Жим лёжа")
+        self.assertEqual(
+            payload["workouts"][0]["exercises"][0]["workout_id"], workout.pk
+        )
+        self.assertEqual(
+            payload["workouts"][0]["exercises"][0]["weight_unit"], "kg"
+        )
+        self.assertEqual(payload["workouts"][0]["local_date"], "2026-10-15")
         self.assertEqual(payload["exercise_results"][0]["weight_kg"], "72.5")
         self.assertEqual(payload["workout_templates"][0]["exercises"][0]["name"], "Тяга")
         self.assertEqual(payload["daily_calories"][0]["calories_burned"], 425)
@@ -1561,6 +1778,8 @@ class IntegrationAndFeaturesTests(TestCase):
         csv_content = csv_response.content.decode("utf-8-sig")
         self.assertIn("set_result", csv_content)
         self.assertIn("template_exercise", csv_content)
+        self.assertIn("'=HYPERLINK", csv_content)
+        self.assertIn('Тренировка ""А""', csv_content)
         self.assertNotIn("Чужой приватный план", csv_content)
         self.assertNotIn("Чужое упражнение", csv_content)
 
@@ -1569,10 +1788,20 @@ class IntegrationAndFeaturesTests(TestCase):
             data={"results": "on", "format": "json"},
         )
         self.assertEqual(selected_export.status_code, 200)
+        selected_payload = selected_export.json()
+        self.assertEqual(selected_payload["schema_version"], 1)
+        self.assertEqual(
+            selected_payload["records"][0]["id"],
+            ExerciseResult.objects.get(workout=workout).pk,
+        )
         self.assertNotIn(
             "Чужой результат",
             selected_export.content.decode("utf-8"),
         )
+
+    def test_csv_formula_prefixes_are_escaped(self):
+        for value in ("=1+1", "+1", "-cmd", "@SUM(A1)", "\tformula", "\n=1+1", "\r=1+1"):
+            self.assertEqual(_safe_csv_cell(value), "'" + value)
 
     def test_full_export_rejects_unknown_format(self):
         response = self.client.get(reverse("export_user_data"), {"format": "xml"})
@@ -1632,6 +1861,18 @@ class IntegrationAndFeaturesTests(TestCase):
             },
         )
         self.assertEqual(response.status_code, 302)
+        self.assertTrue(Workout.objects.filter(id=own_workout.id).exists())
+
+        response = self.client.post(
+            reverse("delete_user_data"),
+            data={
+                "scope": "data_only",
+                "password": "Password123!",
+                "confirmation": "УДАЛИТЬ",
+                "backup_confirmed": "on",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
         self.assertTrue(User.objects.filter(id=self.user.id).exists())
         self.assertFalse(Workout.objects.filter(user=self.user).exists())
         self.assertFalse(Exercise.objects.filter(workout__user=self.user).exists())
@@ -1665,6 +1906,7 @@ class IntegrationAndFeaturesTests(TestCase):
                 "scope": "full_account",
                 "password": "Password123!",
                 "confirmation": "УДАЛИТЬ",
+                "backup_confirmed": "on",
             },
         )
         self.assertRedirects(response, reverse("login"), fetch_redirect_response=False)
@@ -1686,6 +1928,7 @@ class IntegrationAndFeaturesTests(TestCase):
                 "scope": "full_account",
                 "password": "Password123!",
                 "confirmation": "УДАЛИТЬ",
+                "backup_confirmed": "on",
             },
         )
         self.assertEqual(response.status_code, 302)
@@ -1708,6 +1951,7 @@ class IntegrationAndFeaturesTests(TestCase):
                 "scope": "data_only",
                 "password": "Password123!",
                 "confirmation": "УДАЛИТЬ",
+                "backup_confirmed": "on",
             },
         )
         self.assertEqual(response.status_code, 302)

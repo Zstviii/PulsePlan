@@ -18,9 +18,14 @@
         <div class="stat-footnote">Шаблонов: <strong>{{ templates_count }}</strong></div>
     </article>
     <article class="stat-card">
-        <div class="stat-topline"><span class="stat-label">Записи подходов</span></div>
+        <div class="stat-topline"><span class="stat-label">Упражнения</span></div>
+        <div class="stat-value">{{ exercises_count }}</div>
+        <div class="stat-footnote">В пользовательских тренировках</div>
+    </article>
+    <article class="stat-card">
+        <div class="stat-topline"><span class="stat-label">Результаты подходов</span></div>
         <div class="stat-value">{{ set_results_count }}</div>
-        <div class="stat-footnote">Фактические результаты в истории</div>
+        <div class="stat-footnote">Фактические значения в истории</div>
     </article>
     <article class="stat-card">
         <div class="stat-topline"><span class="stat-label">Записи калорий</span></div>
@@ -61,29 +66,48 @@
             </div>
             <div class="panel-body">
                 <p class="small text-muted mb-3">
-                    Действие необратимо. Перед удалением рекомендуется скачать резервную копию в JSON или CSV.
-                    Для защиты от случайного удаления необходимо подтвердить пароль и ввести слово <strong>УДАЛИТЬ</strong>.
+                    Действие необратимо. Перед удалением скачайте и сохраните резервную копию в JSON или CSV.
+                    Для подтверждения потребуется пароль и слово <strong>УДАЛИТЬ</strong>.
                 </p>
-                <form method="post" action="{% url 'delete_user_data' %}" class="stacked-form"
-                      onsubmit="return confirm('Вы уверены? Удалённые данные невозможно восстановить.');">
+                <form method="post" action="{% url 'delete_user_data' %}" class="stacked-form mb-4"
+                      data-delete-title="историю тренировок" data-delete-warning="Перед очисткой сохраните JSON или CSV-экспорт.">
                     {% csrf_token %}
-                    <label class="field-group">
-                        <span>Что удалить</span>
-                        <select name="scope" class="form-select" required>
-                            {% for val, label in delete_form.fields.scope.choices %}
-                                <option value="{{ val }}">{{ label }}</option>
-                            {% endfor %}
-                        </select>
-                    </label>
-                    <label class="field-group">
+                    <input type="hidden" name="scope" value="data_only">
+                    <h3 class="h6">Очистить историю</h3>
+                    <p class="small text-muted">Удалятся только принадлежащие вам тренировки, результаты, шаблоны и записи калорий. Аккаунт останется.</p>
+                    <label class="field-group" for="history-password">
                         <span>Текущий пароль</span>
-                        <input type="password" name="password" class="form-control" autocomplete="current-password" required>
+                        <input id="history-password" type="password" name="password" class="form-control" autocomplete="current-password" required>
                     </label>
-                    <label class="field-group">
+                    <label class="field-group" for="history-confirmation">
                         <span>Введите слово <strong>УДАЛИТЬ</strong></span>
-                        <input type="text" name="confirmation" class="form-control" placeholder="УДАЛИТЬ" required>
+                        <input id="history-confirmation" type="text" name="confirmation" class="form-control" placeholder="УДАЛИТЬ" required>
                     </label>
-                    <button type="submit" class="btn btn-danger-action w-100">Подтвердить удаление</button>
+                    <label class="field-group field-checkbox" for="history-backup-confirmed">
+                        <span><input id="history-backup-confirmed" type="checkbox" name="backup_confirmed" required> Я скачал(а) и сохранил(а) JSON- или CSV-экспорт</span>
+                    </label>
+                    <button type="submit" class="btn btn-danger-action w-100">Очистить историю</button>
+                </form>
+
+                <hr>
+                <form method="post" action="{% url 'delete_user_data' %}" class="stacked-form"
+                      data-delete-title="аккаунт {{ user.username }}" data-delete-warning="Аккаунт и все его данные будут удалены без возможности восстановления.">
+                    {% csrf_token %}
+                    <input type="hidden" name="scope" value="full_account">
+                    <h3 class="h6">Удалить аккаунт</h3>
+                    <p class="small text-muted">Удаление завершит вашу сессию и удалит аккаунт вместе с его данными.</p>
+                    <label class="field-group" for="account-password">
+                        <span>Текущий пароль</span>
+                        <input id="account-password" type="password" name="password" class="form-control" autocomplete="current-password" required>
+                    </label>
+                    <label class="field-group" for="account-confirmation">
+                        <span>Введите слово <strong>УДАЛИТЬ</strong></span>
+                        <input id="account-confirmation" type="text" name="confirmation" class="form-control" placeholder="УДАЛИТЬ" required>
+                    </label>
+                    <label class="field-group field-checkbox" for="account-backup-confirmed">
+                        <span><input id="account-backup-confirmed" type="checkbox" name="backup_confirmed" required> Я скачал(а) и сохранил(а) JSON- или CSV-экспорт</span>
+                    </label>
+                    <button type="submit" class="btn btn-danger-action w-100">Удалить аккаунт</button>
                 </form>
             </div>
         </section>

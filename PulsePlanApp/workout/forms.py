@@ -1,8 +1,15 @@
-from datetime import datetime, time
+from datetime import date, datetime, time
+import uuid
+
 from django import forms
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.utils import timezone
 
 from .models import DailyCalories, Exercise, ExerciseResult, TemplateExercise, Workout, WorkoutTemplate
+
+
+CALENDAR_MIN_DATE = date(1900, 1, 1)
+CALENDAR_MAX_DATE = date(2100, 12, 31)
 
 
 class WorkoutForm(forms.ModelForm):
@@ -11,7 +18,15 @@ class WorkoutForm(forms.ModelForm):
     date = forms.DateField(
         required=False,
         input_formats=["%Y-%m-%d"],
-        error_messages={"invalid": "Некорректный формат даты."},
+        validators=[
+            MinValueValidator(CALENDAR_MIN_DATE),
+            MaxValueValidator(CALENDAR_MAX_DATE),
+        ],
+        error_messages={
+            "invalid": "Некорректный формат даты.",
+            "min_value": "Дата должна быть не ранее 01.01.1900.",
+            "max_value": "Дата должна быть не позднее 31.12.2100.",
+        },
     )
     time = forms.TimeField(
         required=False,
@@ -171,10 +186,22 @@ class TemplateExerciseForm(forms.ModelForm):
 
 
 class TemplateUseForm(forms.Form):
+    submission_token = forms.UUIDField(
+        initial=uuid.uuid4,
+        widget=forms.HiddenInput,
+    )
     date = forms.DateField(
         input_formats=["%Y-%m-%d"],
         widget=forms.DateInput(attrs={"type": "date", "class": "form-control"}),
-        error_messages={"invalid": "Некорректная дата."},
+        validators=[
+            MinValueValidator(CALENDAR_MIN_DATE),
+            MaxValueValidator(CALENDAR_MAX_DATE),
+        ],
+        error_messages={
+            "invalid": "Некорректная дата.",
+            "min_value": "Дата должна быть не ранее 01.01.1900.",
+            "max_value": "Дата должна быть не позднее 31.12.2100.",
+        },
     )
     time = forms.TimeField(
         input_formats=["%H:%M", "%H:%M:%S"],
@@ -182,16 +209,52 @@ class TemplateUseForm(forms.Form):
         error_messages={"invalid": "Некорректное время."},
     )
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.is_bound and self.errors:
+            for name in ("date", "time"):
+                if name in self.errors:
+                    self.fields[name].widget.attrs.update(
+                        {
+                            "class": "form-control is-invalid",
+                            "aria-invalid": "true",
+                            "aria-describedby": f"{name}-error",
+                        }
+                    )
+
 
 class ExerciseResultForm(forms.ModelForm):
     class Meta:
         model = ExerciseResult
         fields = ["set_number", "reps", "weight_kg"]
         widgets = {
-            "set_number": forms.NumberInput(attrs={"class": "form-control", "min": 1}),
-            "reps": forms.NumberInput(attrs={"class": "form-control", "min": 1}),
-            "weight_kg": forms.NumberInput(attrs={"class": "form-control", "min": 0, "step": "0.5"}),
+            "set_number": forms.NumberInput(
+                attrs={"class": "form-control", "min": 1, "max": 100, "step": 1}
+            ),
+            "reps": forms.NumberInput(
+                attrs={"class": "form-control", "min": 1, "max": 1000, "step": 1}
+            ),
+            "weight_kg": forms.NumberInput(
+                attrs={"class": "form-control", "min": 0, "max": "999.9", "step": "0.1"}
+            ),
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        first_invalid = True
+        if self.is_bound and self.errors:
+            for name, field in self.fields.items():
+                if name in self.errors:
+                    field.widget.attrs["class"] += " is-invalid"
+                    field.widget.attrs.update(
+                        {
+                            "aria-invalid": "true",
+                            "aria-describedby": f"id_{name}-error",
+                        }
+                    )
+                    if first_invalid:
+                        field.widget.attrs["autofocus"] = True
+                        first_invalid = False
 
 
 class SafeDataDeleteForm(forms.Form):
@@ -207,6 +270,12 @@ class SafeDataDeleteForm(forms.Form):
     password = forms.CharField(
         widget=forms.PasswordInput,
         error_messages={"required": "Введите текущий пароль для подтверждения."},
+    )
+    backup_confirmed = forms.BooleanField(
+        required=True,
+        error_messages={
+            "required": "Перед удалением подтвердите, что экспорт уже сохранён."
+        },
     )
     confirmation = forms.CharField(
         error_messages={"required": "Введите слово подтверждения УДАЛИТЬ."},
