@@ -2,7 +2,7 @@ import calendar
 import csv
 import io
 import json
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 from time import sleep
 from urllib.parse import urlencode
 
@@ -16,9 +16,11 @@ from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_http_methods, require_POST
 
 from .forms import (
+    CALENDAR_MAX_DATE,
+    CALENDAR_MIN_DATE,
     DailyCaloriesForm,
     ExerciseForm,
     ExerciseResultForm,
@@ -28,14 +30,23 @@ from .forms import (
     WorkoutForm,
     WorkoutTemplateForm,
 )
-from .models import DailyCalories, Exercise, ExerciseResult, TemplateExercise, Workout, WorkoutTemplate
-
+from .models import (
+    DailyCalories,
+    Exercise,
+    ExerciseResult,
+    TemplateExercise,
+    TemplateUseSubmission,
+    Workout,
+    WorkoutTemplate,
+)
 
 def _parse_selected_date(raw_date: str | None) -> date:
     if raw_date:
         try:
-            return date.fromisoformat(raw_date)
-        except ValueError:
+            selected = date.fromisoformat(raw_date)
+            if CALENDAR_MIN_DATE <= selected <= CALENDAR_MAX_DATE:
+                return selected
+        except (OverflowError, ValueError):
             pass
     return timezone.localdate()
 
@@ -63,7 +74,8 @@ def _shift_month(target_date: date, delta_months: int, anchor_day: int | None = 
         return target_date
     _, max_day = calendar.monthrange(new_year, new_month)
     desired_day = anchor_day if anchor_day is not None else target_date.day
-    return date(new_year, new_month, min(desired_day, max_day))
+    shifted = date(new_year, new_month, min(desired_day, max_day))
+    return shifted if CALENDAR_MIN_DATE <= shifted <= CALENDAR_MAX_DATE else target_date
 
 
 def _dashboard_redirect(target_date: date, view_mode: str | None = None, anchor_day: int | None = None):
@@ -87,7 +99,7 @@ def _get_user_workout(user, workout_id: int) -> Workout:
 
 def _safe_csv_cell(value) -> str:
     text = "" if value is None else str(value)
-    if text and text[0] in ("=", "+", "-", "@", "\t", "\r"):
+    if text and text[0] in ("=", "+", "-", "@", "\t", "\r", "\n"):
         return f"'{text}"
     return text
 
@@ -145,8 +157,21 @@ def dashboard_view(request):
         month_weeks = [[start_of_week + timedelta(days=i) for i in range(7)]]
         range_start = start_of_week
         range_end = end_of_week
-        prev_date = selected_date - timedelta(days=7)
-        next_date = selected_date + timedelta(days=7)
+        previous_week = selected_date - timedelta(days=7)
+        following_week = selected_date + timedelta(days=7)
+        prev_date = (
+            previous_week
+            if previous_week >= CALENDAR_MIN_DATE
+            else selected_date
+        )
+        next_date = (
+            following_week
+            if following_week <= CALENDAR_MAX_DATE
+            else selected_date
+        )
+
+    can_navigate_previous = prev_date != selected_date
+    can_navigate_next = next_date != selected_date
 
     stats_range_start = min(range_start, start_of_week)
     stats_range_end = max(range_end, end_of_week)
@@ -196,6 +221,7 @@ def dashboard_view(request):
             week_days.append(
                 {
                     "date": day,
+                    "is_navigable": CALENDAR_MIN_DATE <= day <= CALENDAR_MAX_DATE,
                     "is_today": day == today,
                     "is_selected": day == selected_date,
                     "in_current_month": day.month == selected_date.month,
@@ -253,6 +279,8 @@ def dashboard_view(request):
         "calendar_weeks": calendar_weeks,
         "prev_date": prev_date,
         "next_date": next_date,
+        "can_navigate_previous": can_navigate_previous,
+        "can_navigate_next": can_navigate_next,
         "selected_day_workouts": selected_day_workouts,
         "selected_day_calorie_logs": selected_day_calorie_logs,
         "selected_day_total_calories": selected_day_total_calories,
@@ -565,34 +593,70 @@ def template_delete_view(request, template_id):
 
 
 @login_required
+@require_http_methods(["GET", "POST"])
 def template_use_view(request, template_id):
     template = get_object_or_404(WorkoutTemplate.objects.prefetch_related("exercises"), id=template_id, user=request.user)
+    form = TemplateUseForm(request.POST if request.method == "POST" else None)
     if request.method == "POST":
-        form = TemplateUseForm(request.POST)
-        if not form.is_valid():
-            return render(
-                request,
-                "workout/template_use.html",
-                {"template_obj": template, "today": timezone.localdate(), "form": form},
-            )
-        target_date = form.cleaned_data["date"]
-        parsed_time = form.cleaned_data["time"]
-        with transaction.atomic():
-            workout = Workout.objects.create(
-                user=request.user, title=template.name, notes=template.notes,
-                scheduled_at=timezone.make_aware(datetime.combine(target_date, parsed_time)),
-            )
-            for item in template.exercises.all():
-                Exercise.objects.create(
-                    workout=workout, name=item.name, sets=item.sets, reps=item.reps,
-                    weight_kg=item.weight_kg, order=item.order,
-                )
-        messages.success(request, f"Тренировка «{workout.title}» создана из шаблона.")
-        return _dashboard_redirect(target_date)
-    form = TemplateUseForm(initial={"date": timezone.localdate(), "time": time(18, 0)})
-    return render(request, "workout/template_use.html", {
-        "template_obj": template, "today": timezone.localdate(), "form": form,
-    })
+        if form.is_valid():
+            template_exercises = list(template.exercises.all())
+            if not template_exercises:
+                form.add_error(None, "Нельзя создать тренировку: в шаблоне нет упражнений.")
+            else:
+                target_date = form.cleaned_data["date"]
+                parsed_time = form.cleaned_data["time"]
+                with transaction.atomic():
+                    submission, is_new = TemplateUseSubmission.objects.get_or_create(
+                        user=request.user,
+                        token=form.cleaned_data["submission_token"],
+                    )
+                    if not is_new:
+                        submission = TemplateUseSubmission.objects.select_for_update().get(
+                            pk=submission.pk
+                        )
+                        if submission.workout_id:
+                            existing_workout = Workout.objects.filter(
+                                pk=submission.workout_id, user=request.user
+                            ).first()
+                            if existing_workout:
+                                return _dashboard_redirect(
+                                    timezone.localtime(
+                                        existing_workout.scheduled_at
+                                    ).date()
+                                )
+                            messages.info(request, "Эта отправка уже была обработана.")
+                            return redirect("dashboard")
+
+                    workout = Workout.objects.create(
+                        user=request.user,
+                        title=template.name,
+                        notes=template.notes,
+                        scheduled_at=timezone.make_aware(
+                            datetime.combine(target_date, parsed_time)
+                        ),
+                    )
+                    Exercise.objects.bulk_create(
+                        [
+                            Exercise(
+                                workout=workout,
+                                name=item.name,
+                                sets=item.sets,
+                                reps=item.reps,
+                                weight_kg=item.weight_kg,
+                                order=item.order,
+                            )
+                            for item in template_exercises
+                        ]
+                    )
+                    submission.workout = workout
+                    submission.save(update_fields=["workout"])
+                messages.success(request, f"Тренировка «{workout.title}» создана из шаблона.")
+                return _dashboard_redirect(target_date)
+    return render(
+        request,
+        "workout/template_use.html",
+        {"template_obj": template, "form": form},
+    )
 
 
 @login_required
@@ -616,15 +680,48 @@ def exercise_result_add_view(request, exercise_id):
     if request.method == "POST":
         form = ExerciseResultForm(request.POST)
         if form.is_valid():
-            result = form.save(commit=False)
-            result.user = request.user
-            result.workout = exercise.workout
-            result.exercise = exercise
-            result.exercise_name = exercise.name
-            result.performed_at = exercise.workout.scheduled_at
-            result.save()
-            messages.success(request, "Результат подхода сохранён.")
-            return redirect("exercise_history", exercise.id)
+            with transaction.atomic():
+                workout = get_object_or_404(
+                    Workout.objects.select_for_update(),
+                    pk=exercise.workout_id,
+                    user=request.user,
+                )
+                if workout.status != Workout.Status.COMPLETED:
+                    form.add_error(
+                        None,
+                        "Результаты можно записывать только для выполненной тренировки.",
+                    )
+                else:
+                    result = form.save(commit=False)
+                    result.workout = workout
+                    result.exercise = exercise
+                    result.exercise_name = exercise.name
+                    result.performed_at = workout.scheduled_at
+                    existing = ExerciseResult.objects.filter(
+                        workout=workout,
+                        exercise=exercise,
+                        set_number=result.set_number,
+                    ).first()
+                    if existing and existing.user_id != request.user.pk:
+                        form.add_error(
+                            None,
+                            "Результат этого подхода принадлежит другому аккаунту.",
+                        )
+                    else:
+                        ExerciseResult.objects.update_or_create(
+                            workout=workout,
+                            exercise=exercise,
+                            set_number=result.set_number,
+                            defaults={
+                                "user": request.user,
+                                "exercise_name": result.exercise_name,
+                                "reps": result.reps,
+                                "weight_kg": result.weight_kg,
+                                "performed_at": result.performed_at,
+                            },
+                        )
+                        messages.success(request, "Результат подхода сохранён.")
+                        return redirect("exercise_history", exercise.id)
     else:
         form = ExerciseResultForm(initial={"set_number": exercise.sets, "reps": exercise.reps, "weight_kg": exercise.weight_kg})
     return render(request, "workout/exercise_result_form.html", {"form": form, "exercise": exercise})
@@ -637,9 +734,12 @@ def account_data_view(request):
         "workouts_count": Workout.objects.filter(user=user).count(),
         "set_results_count": ExerciseResult.objects.filter(
             user=user, workout__user=user
-        ).count(),
+        ).filter(Q(exercise__isnull=True) | Q(exercise__workout__user=user)).count(),
+        "exercises_count": Exercise.objects.filter(workout__user=user).count(),
         "templates_count": WorkoutTemplate.objects.filter(user=user).count(),
-        "calories_count": DailyCalories.objects.filter(user=user).count(),
+        "calories_count": DailyCalories.objects.filter(user=user)
+        .filter(Q(workout__isnull=True) | Q(workout__user=user))
+        .count(),
         "delete_form": SafeDataDeleteForm(user=user),
     }
     return render(request, "workout/account_data.html", context)
@@ -672,12 +772,14 @@ def export_user_data_view(request):
     )
     calories = list(
         DailyCalories.objects.filter(user=user)
+        .filter(Q(workout__isnull=True) | Q(workout__user=user))
         .select_related("workout")
         .order_by("date", "id")
     )
 
     if export_format == "json":
         payload = {
+            "schema_version": 1,
             "exported_at": exported_at.isoformat(),
             "timezone": str(timezone.get_current_timezone()),
             "user": {
@@ -692,15 +794,18 @@ def export_user_data_view(request):
                     "id": workout.pk,
                     "title": workout.title,
                     "scheduled_at": timezone.localtime(workout.scheduled_at).isoformat(),
+                    "local_date": timezone.localtime(workout.scheduled_at).date().isoformat(),
                     "status": workout.status,
                     "notes": workout.notes,
                     "exercises": [
                         {
                             "id": exercise.pk,
+                            "workout_id": workout.pk,
                             "name": exercise.name,
                             "sets": exercise.sets,
                             "reps": exercise.reps,
                             "weight_kg": str(exercise.weight_kg),
+                            "weight_unit": "kg",
                             "order": exercise.order,
                         }
                         for exercise in workout.exercises.all()
@@ -717,7 +822,9 @@ def export_user_data_view(request):
                     "set_number": result.set_number,
                     "reps": result.reps,
                     "weight_kg": str(result.weight_kg),
+                    "weight_unit": "kg",
                     "performed_at": timezone.localtime(result.performed_at).isoformat(),
+                    "local_date": timezone.localtime(result.performed_at).date().isoformat(),
                 }
                 for result in results
             ],
@@ -731,10 +838,12 @@ def export_user_data_view(request):
                     "exercises": [
                         {
                             "id": exercise.pk,
+                            "template_id": template.pk,
                             "name": exercise.name,
                             "sets": exercise.sets,
                             "reps": exercise.reps,
                             "weight_kg": str(exercise.weight_kg),
+                            "weight_unit": "kg",
                             "order": exercise.order,
                         }
                         for exercise in template.exercises.all()
@@ -747,6 +856,7 @@ def export_user_data_view(request):
                     "id": item.pk,
                     "date": item.date.isoformat(),
                     "calories_burned": item.calories_burned,
+                    "calorie_unit": "kcal",
                     "activity_note": item.activity_note,
                     "workout_id": item.workout_id,
                 }
@@ -848,19 +958,40 @@ def delete_user_data_view(request):
         )
         return redirect("account_data")
 
-    if ExerciseResult.objects.filter(workout__user=user).exclude(user=user).exists():
+    has_misowned_results = (
+        ExerciseResult.objects.filter(workout__user=user)
+        .exclude(user=user)
+        .exists()
+        or ExerciseResult.objects.filter(user=user)
+        .exclude(workout__user=user)
+        .exists()
+        or ExerciseResult.objects.filter(user=user, workout__user=user)
+        .exclude(Q(exercise__isnull=True) | Q(exercise__workout__user=user))
+        .exists()
+    )
+    has_misowned_calories = (
+        DailyCalories.objects.filter(user=user)
+        .exclude(Q(workout__isnull=True) | Q(workout__user=user))
+        .exists()
+    )
+    if has_misowned_results or has_misowned_calories:
         messages.error(
             request,
-            "Удаление остановлено: найдены результаты подходов, привязанные к вашим "
-            "тренировкам, но принадлежащие другому аккаунту.",
+            "Удаление остановлено: обнаружены связанные данные, которые не принадлежат "
+            "этому аккаунту. Обратитесь к администратору.",
         )
         return redirect("account_data")
 
     with transaction.atomic():
-        ExerciseResult.objects.filter(user=user).delete()
-        DailyCalories.objects.filter(user=user).delete()
+        ExerciseResult.objects.filter(user=user, workout__user=user).filter(
+            Q(exercise__isnull=True) | Q(exercise__workout__user=user)
+        ).delete()
+        DailyCalories.objects.filter(user=user).filter(
+            Q(workout__isnull=True) | Q(workout__user=user)
+        ).delete()
         Workout.objects.filter(user=user).delete()
         WorkoutTemplate.objects.filter(user=user).delete()
+        TemplateUseSubmission.objects.filter(user=user).delete()
         if form.cleaned_data["scope"] == SafeDataDeleteForm.SCOPE_FULL_ACCOUNT:
             user.delete()
 
@@ -904,15 +1035,39 @@ def export_data_view(request):
             if date_to:
                 qs = qs.filter(scheduled_at__date__lte=date_to)
             for workout in qs:
-                rows.append({"type": "workout", "date": timezone.localtime(workout.scheduled_at).date().isoformat(), "title": workout.title, "status": workout.get_status_display(), "exercise": "", "sets": "", "reps": "", "weight_kg": "", "calories": "", "notes": workout.notes})
+                workout_date = timezone.localtime(workout.scheduled_at).date().isoformat()
+                rows.append({
+                    "type": "workout", "id": workout.pk, "parent_id": "",
+                    "date": workout_date, "title": workout.title,
+                    "status": workout.get_status_display(), "exercise": "",
+                    "sets": "", "reps": "", "weight_kg": "", "weight_unit": "kg",
+                    "calories": "", "calorie_unit": "kcal", "notes": workout.notes,
+                })
                 for ex in workout.exercises.all():
-                    rows.append({"type": "exercise", "date": timezone.localtime(workout.scheduled_at).date().isoformat(), "title": workout.title, "status": workout.get_status_display(), "exercise": ex.name, "sets": ex.sets, "reps": ex.reps, "weight_kg": ex.weight_kg, "calories": "", "notes": ""})
+                    rows.append({
+                        "type": "exercise", "id": ex.pk, "parent_id": workout.pk,
+                        "date": workout_date, "title": workout.title,
+                        "status": workout.get_status_display(), "exercise": ex.name,
+                        "sets": ex.sets, "reps": ex.reps, "weight_kg": ex.weight_kg,
+                        "weight_unit": "kg", "calories": "", "calorie_unit": "kcal",
+                        "notes": "",
+                    })
         if include_calories:
-            qs = DailyCalories.objects.filter(user=request.user)
+            qs = DailyCalories.objects.filter(user=request.user).filter(
+                Q(workout__isnull=True) | Q(workout__user=request.user)
+            )
             if date_from: qs = qs.filter(date__gte=date_from)
             if date_to: qs = qs.filter(date__lte=date_to)
             for item in qs.select_related("workout"):
-                rows.append({"type": "calories", "date": item.date.isoformat(), "title": item.workout.title if item.workout else "", "status": "", "exercise": item.activity_note, "sets": "", "reps": "", "weight_kg": "", "calories": item.calories_burned, "notes": ""})
+                rows.append({
+                    "type": "calories", "id": item.pk,
+                    "parent_id": item.workout_id or "", "date": item.date.isoformat(),
+                    "title": item.workout.title if item.workout else "", "status": "",
+                    "exercise": item.activity_note, "sets": "", "reps": "",
+                    "weight_kg": "", "weight_unit": "kg",
+                    "calories": item.calories_burned, "calorie_unit": "kcal",
+                    "notes": "",
+                })
         if include_results:
             qs = ExerciseResult.objects.filter(
                 user=request.user, workout__user=request.user
@@ -923,7 +1078,15 @@ def export_data_view(request):
             if date_from: qs = qs.filter(performed_at__date__gte=date_from)
             if date_to: qs = qs.filter(performed_at__date__lte=date_to)
             for item in qs:
-                rows.append({"type": "set_result", "date": timezone.localtime(item.performed_at).date().isoformat(), "title": item.workout.title, "status": item.workout.get_status_display(), "exercise": item.exercise_name, "sets": item.set_number, "reps": item.reps, "weight_kg": item.weight_kg, "calories": "", "notes": ""})
+                rows.append({
+                    "type": "set_result", "id": item.pk, "parent_id": item.workout_id,
+                    "date": timezone.localtime(item.performed_at).date().isoformat(),
+                    "title": item.workout.title, "status": item.workout.get_status_display(),
+                    "exercise": item.exercise_name, "sets": item.set_number,
+                    "reps": item.reps, "weight_kg": item.weight_kg,
+                    "weight_unit": "kg", "calories": "", "calorie_unit": "kcal",
+                    "notes": "",
+                })
 
         if include_templates:
             qs = WorkoutTemplate.objects.filter(user=request.user).prefetch_related("exercises")
@@ -935,6 +1098,8 @@ def export_data_view(request):
                 template_date = timezone.localtime(template.created_at).date().isoformat()
                 rows.append({
                     "type": "template",
+                    "id": template.pk,
+                    "parent_id": "",
                     "date": template_date,
                     "title": template.name,
                     "status": "",
@@ -942,12 +1107,16 @@ def export_data_view(request):
                     "sets": "",
                     "reps": "",
                     "weight_kg": "",
+                    "weight_unit": "kg",
                     "calories": "",
+                    "calorie_unit": "kcal",
                     "notes": template.notes,
                 })
                 for exercise in template.exercises.all():
                     rows.append({
                         "type": "template_exercise",
+                        "id": exercise.pk,
+                        "parent_id": template.pk,
                         "date": template_date,
                         "title": template.name,
                         "status": "",
@@ -955,7 +1124,9 @@ def export_data_view(request):
                         "sets": exercise.sets,
                         "reps": exercise.reps,
                         "weight_kg": exercise.weight_kg,
+                        "weight_unit": "kg",
                         "calories": "",
+                        "calorie_unit": "kcal",
                         "notes": "",
                     })
 
@@ -965,7 +1136,15 @@ def export_data_view(request):
 
         filename = f"pulseplan_export_{timezone.localdate().isoformat()}"
         if export_format == "json":
-            response = JsonResponse(rows, safe=False, json_dumps_params={"ensure_ascii": False, "indent": 2})
+            response = JsonResponse(
+                {
+                    "schema_version": 1,
+                    "timezone": str(timezone.get_current_timezone()),
+                    "user_id": request.user.pk,
+                    "records": rows,
+                },
+                json_dumps_params={"ensure_ascii": False, "indent": 2},
+            )
             response["Content-Disposition"] = f'attachment; filename="{filename}.json"'
             return response
 
@@ -973,9 +1152,22 @@ def export_data_view(request):
         response = HttpResponse(content_type="text/csv; charset=utf-8")
         response["Content-Disposition"] = f'attachment; filename="{filename}.csv"'
         response.write("\ufeff")
-        writer = csv.DictWriter(response, fieldnames=["type", "date", "title", "status", "exercise", "sets", "reps", "weight_kg", "calories", "notes"])
+        writer = csv.DictWriter(
+            response,
+            fieldnames=[
+                "type", "id", "parent_id", "date", "title", "status", "exercise",
+                "sets", "reps", "weight_kg", "weight_unit", "calories",
+                "calorie_unit", "notes",
+            ],
+        )
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows(
+            {
+                key: _safe_csv_cell(value) if isinstance(value, str) else value
+                for key, value in row.items()
+            }
+            for row in rows
+        )
         return response
 
     return render(request, "workout/export.html", {"today": timezone.localdate()})

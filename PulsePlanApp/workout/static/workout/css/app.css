@@ -52,6 +52,16 @@ a:hover { color: #4D142A; }
     background: var(--color-primary);
     box-shadow: 0 4px 22px rgba(68, 17, 37, 0.12);
 }
+.navbar-shell > .app-container {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+}
+.navbar-shell .navbar-collapse { flex-grow: 1; min-width: 0; }
+@media (min-width: 992px) {
+    .navbar-shell > .app-container { flex-wrap: nowrap; }
+}
 
 .brand-link { display: inline-flex; align-items: center; padding: 0; margin: 0; }
 .brand-logo { display: block; width: 174px; height: 48px; object-fit: contain; object-position: left center; }
@@ -65,6 +75,7 @@ a:hover { color: #4D142A; }
     border: 1px solid rgba(255,255,255,.48);
     border-radius: 11px;
     color: #fff;
+    background: transparent;
     font-size: 14px;
     font-weight: 600;
     transition: background .18s ease, color .18s ease, border-color .18s ease;
@@ -149,7 +160,7 @@ a:hover { color: #4D142A; }
     text-align: right;
 }
 .intro-date-label { color: var(--color-muted); font-size: 12px; }
-.intro-date strong { color: var(--color-primary); font-size: 16px; font-weight: 700; }
+.intro-date strong { color: var(--color-primary); font-size: 16px; font-weight: 700; white-space: nowrap; }
 
 /* Summary cards */
 .stats-grid {
@@ -179,6 +190,14 @@ a:hover { color: #4D142A; }
     background: rgba(107,31,59,.08);
     color: var(--color-primary);
     font-size: 20px;
+}
+.stat-card-featured .stat-icon {
+    width: auto;
+    min-width: 34px;
+    padding: 0 7px;
+    flex: 0 0 auto;
+    font-size: 14px;
+    white-space: nowrap;
 }
 .stat-value { margin-top: 11px; color: var(--color-primary); font-size: 28px; font-weight: 700; letter-spacing: -.04em; line-height: 1.15; }
 .stat-value span { font-size: 16px; font-weight: 600; letter-spacing: 0; }
@@ -228,6 +247,7 @@ a:hover { color: #4D142A; }
     transition: .18s ease;
 }
 .calendar-arrow:hover { color: #fff; background: var(--color-primary); border-color: var(--color-primary); }
+.calendar-arrow.is-disabled { color: #B9B1B3; background: #F8F6F6; cursor: not-allowed; }
 .calendar-period { min-width: 125px; color: var(--color-text); font-size: 15px; font-weight: 700; text-align: center; text-transform: capitalize; }
 .today-button {
     display: inline-flex;
@@ -276,6 +296,9 @@ a:hover { color: #4D142A; }
 .calendar-table tbody tr td:last-child { border-right: 0; }
 .calendar-table tbody tr:last-child td { border-bottom: 0; }
 .calendar-cell:hover { background: #FFFCFC; }
+.calendar-cell { cursor: pointer; }
+.calendar-cell.is-unavailable { cursor: not-allowed; }
+.calendar-cell:focus-visible { z-index: 2; outline: 3px solid var(--color-accent); outline-offset: -3px; }
 .calendar-cell.is-selected { background: #FCF3F5; box-shadow: inset 0 0 0 2px var(--color-primary); z-index: 1; }
 .calendar-cell.is-today:not(.is-selected) { background: #FFFDFD; }
 .calendar-cell.is-today:not(.is-selected)::before { position: absolute; top: 0; left: 0; width: 100%; height: 3px; background: var(--color-accent); content: ""; }
@@ -326,7 +349,7 @@ a:hover { color: #4D142A; }
 .legend-planned { background: var(--color-accent); }
 .legend-completed { background: #5B9877; }
 .legend-skipped { background: #A5A5AA; }
-.key-selected, .key-today { display: inline-block; width: 10px; height: 10px; margin-right: -10px; border: 2px solid var(--color-primary); border-radius: 3px; }
+.key-selected, .key-today { display: inline-block; width: 10px; height: 10px; margin-right: 5px; border: 2px solid var(--color-primary); border-radius: 3px; }
 .key-today { border: 0; border-radius: 50%; background: var(--color-accent); }
 
 /* Lower content columns */
@@ -351,6 +374,7 @@ a:hover { color: #4D142A; }
 .calorie-chip { padding: 3px 8px; border-radius: 20px; color: var(--color-primary); background: #FBF0F2; font-size: 11px; font-weight: 700; }
 .workout-tools { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .status-actions { display: flex; align-items: center; gap: 3px; padding: 3px; border-radius: 10px; background: #F7F4F4; }
+.status-actions form { margin: 0; }
 .status-action { min-height: 30px; padding: 4px 9px; border: 0; border-radius: 7px; color: #7C7376; background: transparent; font-size: 11px; font-weight: 600; transition: .16s ease; }
 .status-action:hover { color: var(--color-primary); background: #fff; }
 .status-action.selected { color: var(--color-primary); background: #fff; box-shadow: 0 1px 4px rgba(50,20,30,.1); }
@@ -399,6 +423,8 @@ a:hover { color: #4D142A; }
 /* Forms */
 .form-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .field-group { display: flex; flex-direction: column; min-width: 0; gap: 6px; margin: 0; color: var(--color-text); font-size: 13px; font-weight: 600; }
+.field-checkbox > span { display: flex; align-items: flex-start; gap: 8px; line-height: 1.45; }
+.field-checkbox input { flex: 0 0 auto; margin-top: 3px; accent-color: var(--color-primary); }
 .field-group > span { color: #6E6265; font-size: 12px; font-weight: 600; }
 .field-group em { color: var(--color-muted); font-size: 11px; font-style: normal; font-weight: 400; }
 .field-group .form-control,
@@ -537,6 +563,15 @@ a:hover { color: #4D142A; }
 }
 
 @media (max-width: 600px) {
+    #dashboard-content {
+        display: grid;
+        grid-template-areas: "intro" "stats" "content" "calendar";
+        gap: 18px;
+    }
+    #dashboard-content > .dashboard-intro { grid-area: intro; margin-bottom: 0; }
+    #dashboard-content > .stats-grid { grid-area: stats; margin-bottom: 0; }
+    #dashboard-content > .content-grid { grid-area: content; }
+    #dashboard-content > .calendar-panel { grid-area: calendar; margin-bottom: 0; }
     .navbar-shell { min-height: 70px; }
     .brand-logo { width: 145px; height: 42px; }
     .app-container, .app-main { width: min(100% - 28px, 1460px); }
@@ -546,13 +581,19 @@ a:hover { color: #4D142A; }
     .page-title { font-size: 28px; }
     .page-subtitle { max-width: 430px; font-size: 14px; }
     .intro-date { min-width: 0; padding: 9px 11px; text-align: left; }
+    .intro-date { flex-shrink: 0; }
     .intro-date-label { font-size: 10px; }
     .intro-date strong { font-size: 13px; }
-    .stats-grid { grid-template-columns: 1fr; gap: 10px; margin-bottom: 18px; }
-    .stat-card { min-height: auto; padding: 15px 17px; }
-    .stat-value { margin-top: 7px; font-size: 24px; }
-    .stat-value-date { font-size: 22px; }
-    .stat-footnote { margin-top: 5px; }
+    .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-bottom: 14px; }
+    .stat-card { min-height: 112px; padding: 12px; }
+    .stat-card-selected-date { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr auto; align-items: center; min-height: 72px; }
+    .stat-card-selected-date .stat-topline { grid-column: 1; justify-content: flex-start; }
+    .stat-card-selected-date .stat-value { grid-column: 2; grid-row: 1 / span 2; margin: 0; }
+    .stat-card-selected-date .stat-footnote { grid-column: 1; }
+    .stat-label { font-size: 11px; }
+    .stat-value { margin-top: 6px; font-size: 21px; }
+    .stat-value-date { font-size: 19px; }
+    .stat-footnote { margin-top: 4px; font-size: 10px; }
     .panel-heading { padding: 18px 16px; }
     .panel-body { padding: 17px 16px; }
     .section-title { font-size: 21px; }
@@ -562,8 +603,18 @@ a:hover { color: #4D142A; }
     .calendar-period { flex: 1; }
     .today-button { grid-column: 1; grid-row: 2; }
     .view-switch { grid-column: 2; grid-row: 2; justify-self: end; }
-    .calendar-table { min-width: 700px; }
-    .calendar-table tbody td { height: 105px; padding: 7px 6px; }
+    .calendar-scroll { overflow-x: hidden; }
+    .calendar-table { min-width: 0; }
+    .calendar-table thead th { height: 34px; padding: 7px 1px; font-size: 10px; letter-spacing: 0; }
+    .calendar-table tbody td { height: 76px; padding: 5px 3px; }
+    .calendar-cell-top { gap: 2px; margin-bottom: 4px; }
+    .calendar-day-number { width: 23px; height: 23px; border-radius: 7px; font-size: 11px; }
+    .day-workout-count { min-width: 16px; height: 16px; padding: 0 3px; font-size: 9px; }
+    .calendar-events { gap: 2px; }
+    .calendar-event { justify-content: center; min-height: 16px; padding: 2px; }
+    .event-time, .event-name { display: none; }
+    .event-mark { margin-left: 0; font-size: 10px; }
+    .calendar-calories { max-width: 100%; overflow: hidden; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
     .calendar-footer { align-items: flex-start; padding: 13px 16px; }
     .status-legend { gap: 10px; }
     .calendar-key { gap: 12px; }

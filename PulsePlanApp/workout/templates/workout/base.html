@@ -14,7 +14,7 @@
         <a class="navbar-brand brand-link" href="{% url 'dashboard' %}">
             <img class="brand-logo" src="{% static 'workout/img/pulseplan-logo-white.png' %}" alt="PulsePlan">
         </a>
-        <button class="navbar-toggler" type="button" data-bs-toggle="collapse"
+        <button class="navbar-toggler nav-toggle" type="button" data-bs-toggle="collapse"
                 data-bs-target="#pulseplanNavbar" aria-controls="pulseplanNavbar"
                 aria-expanded="false" aria-label="Открыть меню">
             <span class="navbar-toggler-icon"></span>
@@ -76,6 +76,78 @@
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
+    const formErrorSummary = document.getElementById('form-errors');
+    if (formErrorSummary && !document.querySelector('[autofocus]')) {
+        formErrorSummary.focus();
+    }
+
+    let calendarRequest = null;
+    const showCalendarError = function(message) {
+        let notice = document.getElementById('calendar-navigation-error');
+        if (!notice) {
+            notice = document.createElement('div');
+            notice.id = 'calendar-navigation-error';
+            notice.className = 'alert alert-danger';
+            notice.setAttribute('role', 'alert');
+            notice.setAttribute('aria-live', 'assertive');
+            const dashboard = document.getElementById('dashboard-content');
+            if (dashboard) dashboard.before(notice);
+        }
+        notice.textContent = message;
+    };
+    const loadCalendar = async function(url, addHistory) {
+        const currentDashboard = document.getElementById('dashboard-content');
+        if (!currentDashboard) return;
+        if (calendarRequest) calendarRequest.abort();
+        calendarRequest = new AbortController();
+        const request = calendarRequest;
+        const notice = document.getElementById('calendar-navigation-error');
+        if (notice) notice.remove();
+        try {
+            const response = await fetch(url, {
+                headers: {'X-Requested-With': 'XMLHttpRequest'},
+                signal: request.signal
+            });
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            const page = new DOMParser().parseFromString(await response.text(), 'text/html');
+            if (request.signal.aborted) return;
+            const newDashboard = page.getElementById('dashboard-content');
+            if (!newDashboard) throw new Error('Dashboard content is missing');
+            const latestDashboard = document.getElementById('dashboard-content');
+            if (!latestDashboard) return;
+            latestDashboard.replaceWith(newDashboard);
+            document.title = page.title;
+            if (addHistory) history.pushState({calendar: true}, '', response.url);
+        } catch (error) {
+            if (error.name === 'AbortError') return;
+            console.error('Calendar navigation failed:', error);
+            showCalendarError('Не удалось обновить календарь. Проверьте соединение и попробуйте ещё раз.');
+        }
+    };
+    document.addEventListener('click', function(event) {
+        const navigationLink = event.target.closest('[data-calendar-navigation]');
+        if (navigationLink) {
+            event.preventDefault();
+            loadCalendar(navigationLink.href, true);
+            return;
+        }
+        const cell = event.target.closest('[data-calendar-cell]');
+        if (cell) {
+            event.preventDefault();
+            loadCalendar(cell.dataset.calendarUrl, true);
+        }
+    });
+    document.addEventListener('keydown', function(event) {
+        const cell = event.target.closest('[data-calendar-cell]');
+        if (cell && (event.key === 'Enter' || event.key === ' ')) {
+            event.preventDefault();
+            loadCalendar(cell.dataset.calendarUrl, true);
+        }
+    });
+    window.addEventListener('popstate', function() {
+        loadCalendar(window.location.href, false);
+    });
+
     const modalEl = document.getElementById('deleteConfirmModal');
     const modal = modalEl ? new bootstrap.Modal(modalEl) : null;
     const confirmButton = document.getElementById('deleteConfirmButton');

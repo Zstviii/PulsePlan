@@ -1,4 +1,5 @@
 from decimal import Decimal
+import uuid
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
@@ -210,6 +211,32 @@ class WorkoutTemplate(models.Model):
         return self.name
 
 
+class TemplateUseSubmission(models.Model):
+    """Idempotency key for creating a workout from a template."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="template_use_submissions",
+    )
+    token = models.UUIDField(default=uuid.uuid4)
+    workout = models.ForeignKey(
+        Workout,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="template_use_submissions",
+    )
+    created_at = models.DateTimeField("Создано", auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "token"], name="unique_template_use_submission"
+            )
+        ]
+
+
 class TemplateExercise(models.Model):
     """Упражнение внутри шаблона."""
 
@@ -260,12 +287,23 @@ class ExerciseResult(models.Model):
         ordering = ["-performed_at", "set_number"]
         verbose_name = "Результат подхода"
         verbose_name_plural = "Результаты подходов"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workout", "exercise", "set_number"],
+                condition=models.Q(exercise__isnull=False),
+                name="unique_exercise_result_set",
+            )
+        ]
 
     def clean(self):
         super().clean()
         if self.workout_id and self.user_id and self.workout.user_id != self.user_id:
             raise ValidationError(
                 {"workout": "Нельзя привязать результат к тренировке другого пользователя."}
+            )
+        if self.workout_id and self.workout.status != Workout.Status.COMPLETED:
+            raise ValidationError(
+                {"workout": "Результаты можно записывать только для выполненной тренировки."}
             )
         if self.exercise_id and self.workout_id:
             if self.exercise.workout_id != self.workout_id:
