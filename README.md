@@ -4,6 +4,20 @@
 
 Django-проект находится в директории `PulsePlanApp/`. По умолчанию используется база данных SQLite, а настройки приложения загружаются из переменных окружения.
 
+## Содержание
+
+- [Требования](#требования)
+- [Локальная установка](#локальная-установка)
+- [Настройка окружения](#настройка-переменных-окружения)
+- [База данных и запуск сервера](#база-данных-и-запуск-сервера)
+- [Production за Nginx](#production-https-за-nginx)
+  - [Первичное развёртывание](#подготовка-чистой-копии)
+  - [Обновление сайта без прав администратора](#обновление-существующего-сайта-без-прав-администратора)
+  - [Проверка опубликованного сайта](#проверка-опубликованного-сайта)
+- [Тестирование](#тестирование)
+- [Демонстрационные данные](#дополнительные-демонстрационные-данные)
+- [Материалы проекта](#материалы-проекта)
+
 ## Требования
 
 - Python 3.12 или новее.
@@ -121,6 +135,23 @@ DJANGO_ALLOWED_HOSTS=pulseplan.treidendev.ru
 DJANGO_CSRF_TRUSTED_ORIGINS=https://pulseplan.treidendev.ru
 ```
 
+### Почта для сброса пароля
+
+В `.env.example` для локальной разработки включён `console.EmailBackend`: письма выводятся в консоль и не отправляются адресату. Для production замените эту строку в `.env` на SMTP-настройки провайдера:
+
+```dotenv
+DJANGO_EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+DJANGO_EMAIL_HOST=<SMTP-сервер>
+DJANGO_EMAIL_PORT=587
+DJANGO_EMAIL_HOST_USER=<имя-пользователя-SMTP>
+DJANGO_EMAIL_HOST_PASSWORD=<пароль-или-ключ-SMTP>
+DJANGO_EMAIL_USE_TLS=True
+DJANGO_EMAIL_USE_SSL=False
+DJANGO_DEFAULT_FROM_EMAIL=PulsePlan <noreply@ваш-домен>
+```
+
+Именно замените активную строку `DJANGO_EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend`, а не добавляйте вторую: при дублировании переменных локальный загрузчик `.env` может оставить первое значение. SMTP-реквизиты выдаёт почтовый провайдер; не публикуйте их и не добавляйте в Git. После настройки проверьте запрос сброса пароля и папку «Спам».
+
 При `DJANGO_DEBUG=False` Django доверяет `X-Forwarded-Proto: https`, перенаправляет HTTP на HTTPS и выставляет secure-флаги для session и CSRF cookies. Не включайте этот proxy-заголовок, если приложение доступно клиентам в обход настроенного Nginx. Не используйте `runserver` для production.
 
 ### Обновление существующего сайта без прав администратора
@@ -189,10 +220,29 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 python manage.py check --deploy
 python manage.py migrate --noinput
+umask 022
 python manage.py collectstatic --noinput
 ```
 
-Оцените все сообщения `check --deploy`. Предупреждение `security.W004` об отключённом HSTS ожидаемо для текущей конфигурации; не включайте HSTS без отдельной проверки постоянного HTTPS для домена и поддоменов. Не продолжайте при ошибках проверок, миграций или сборки статики.
+После резервного копирования с `umask 077` восстановите `umask 022` перед `collectstatic`, чтобы Nginx мог читать новые статические файлы. Содержимое `staticfiles/` не удаляйте. Оцените все сообщения `check --deploy`. Предупреждение `security.W004` об отключённом HSTS ожидаемо для текущей конфигурации; не включайте HSTS без отдельной проверки постоянного HTTPS для домена и поддоменов. Не продолжайте при ошибках проверок, миграций или сборки статики.
+
+Убедитесь, что Nginx отдаёт ключевой CSS-файл:
+
+```sh
+curl --fail -sS -o /dev/null -w 'Bootstrap CSS HTTP %{http_code}\n' \
+  https://pulseplan.treidendev.ru/static/workout/vendor/bootstrap.min.css
+```
+
+Ожидается `Bootstrap CSS HTTP 200`; при другом ответе проверьте права на `staticfiles/` и не продолжайте до исправления.
+
+Если новые файлы созданы с закрытыми правами и принадлежат пользователю `pulseplan`, восстановите права на чтение для Nginx и повторите проверку:
+
+```sh
+find staticfiles -type d -exec chmod 755 {} +
+find staticfiles -type f -exec chmod 644 {} +
+```
+
+Если изменить права не удаётся, остановитесь и обратитесь к администратору сервера.
 
 Для graceful reload без `sudo` сначала проверьте PID главного процесса systemd-службы и его владельца:
 
