@@ -1,0 +1,33 @@
+{% extends "workout/base.html" %}
+{% block title %}{{ heading }} — PulsePlan{% endblock %}
+{% block content %}
+<section class="panel entry-form-panel">
+    <div class="panel-heading">
+        <div>
+            <h1 class="page-title">{{ heading }}</h1>
+            {% if description %}<p class="page-subtitle">{{ description }}</p>{% endif %}
+        </div>
+    </div>
+    <div class="panel-body">
+        <form method="post" class="stacked-form">
+            {% csrf_token %}
+            <input type="hidden" name="mode" value="{{ view_mode }}">
+            <input type="hidden" name="day" value="{{ anchor_day }}">
+            {% if submission_token %}<input type="hidden" name="submission_token" value="{{ submission_token }}">{% endif %}
+            {{ form.non_field_errors }}
+            {% for field in form %}
+                <div class="field-group">
+                    {{ field.label_tag }}
+                    {{ field }}
+                    {% if field.help_text %}<small id="{{ field.auto_id }}_helptext">{{ field.help_text }}</small>{% endif %}
+                    {{ field.errors }}
+                </div>
+            {% endfor %}
+            <div class="field-actions">
+                <button type="submit" class="btn btn-primary-action">Сохранить</button>
+                <a class="btn btn-secondary-action" href="{% url 'dashboard' %}?date={{ selected_date|date:'Y-m-d' }}&amp;mode={{ view_mode }}&amp;day={{ anchor_day }}">В календарь</a>
+            </div>
+        </form>
+    </div>
+</section>
+{% endblock %}

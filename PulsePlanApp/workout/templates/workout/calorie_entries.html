@@ -1,0 +1,24 @@
+<section class="calorie-group">
+    <h3 class="h6">{{ heading }}</h3>
+    <ul class="list-group list-group-flush small mb-3">
+        {% for log in logs %}
+            <li class="list-group-item px-0 d-flex flex-wrap gap-2 justify-content-between align-items-center">
+                <div>
+                    <strong>{{ log.calories_burned }} ккал</strong>
+                    {% if log.workout %}<div>{{ log.workout.title }}</div>{% endif %}
+                    {% if log.activity_note %}<div class="text-muted">{{ log.activity_note }}</div>{% endif %}
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <a href="{% url 'calorie_update' log.id %}?mode={{ view_mode }}&amp;day={{ anchor_day }}" class="small-link">Изменить</a>
+                    <form method="post" action="{% url 'calorie_delete' log.id %}" class="m-0" data-delete-title="запись о {{ log.calories_burned }} ккал">
+                        {% csrf_token %}
+                        <input type="hidden" name="mode" value="{{ view_mode }}">
+                        <button type="submit" class="mini-icon-button mini-icon-danger" aria-label="Удалить запись о {{ log.calories_burned }} ккал">×</button>
+                    </form>
+                </div>
+            </li>
+        {% empty %}
+            <li class="list-group-item px-0 text-muted">Записей за этот день нет.</li>
+        {% endfor %}
+    </ul>
+</section>

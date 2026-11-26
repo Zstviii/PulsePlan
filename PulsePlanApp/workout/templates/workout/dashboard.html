@@ -150,6 +150,8 @@
                     </div>
                     <form method="post" action="{% url 'workout_create' %}" class="form-grid create-workout-form">
                         {% csrf_token %}
+                        <input type="hidden" name="submission_token" value="{{ workout_submission_token }}">
+                        <input type="hidden" name="day" value="{{ anchor_day }}">
                         <input type="hidden" name="date" value="{{ selected_date|date:'Y-m-d' }}">
                         <input type="hidden" name="mode" value="{{ view_mode }}">
                         <label class="field-group workout-title-field" for="new-workout-title">
@@ -354,28 +356,8 @@
                 <span class="day-total-pill">{{ selected_day_total_calories }} ккал</span>
             </div>
             <div class="panel-body">
-                <ul class="list-group list-group-flush small mb-3">
-                    {% for log in selected_day_calorie_logs %}
-                        <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
-                            <div>
-                                <strong>{{ log.calories_burned }} ккал</strong>
-                                {% if log.workout %}
-                                    <span class="badge bg-primary-subtle text-primary ms-1">{{ log.workout.title }}</span>
-                                {% endif %}
-                                {% if log.activity_note %}
-                                    <div class="text-muted">{{ log.activity_note }}</div>
-                                {% endif %}
-                            </div>
-                            <form method="post" action="{% url 'calorie_delete' log.id %}" class="m-0" data-delete-title="запись о {{ log.calories_burned }} ккал">
-                                {% csrf_token %}
-                                <input type="hidden" name="mode" value="{{ view_mode }}">
-                                <button type="submit" class="btn btn-link text-danger p-0 text-decoration-none fw-bold">×</button>
-                            </form>
-                        </li>
-                    {% empty %}
-                        <li class="list-group-item px-0 text-muted">Записей о расходе калорий за этот день нет.</li>
-                    {% endfor %}
-                </ul>
+                {% include "workout/calorie_entries.html" with heading="Калории тренировок" logs=workout_calorie_logs %}
+                {% include "workout/calorie_entries.html" with heading="Общая активность за день" logs=activity_calorie_logs %}
 
                 <h6 class="fw-bold mb-2">Добавить расход калорий</h6>
                 {% if is_future_selected %}
@@ -383,6 +365,8 @@
                 {% else %}
                     <form method="post" action="{% url 'calorie_create' %}" class="row g-2">
                         {% csrf_token %}
+                        <input type="hidden" name="submission_token" value="{{ calorie_submission_token }}">
+                        <input type="hidden" name="day" value="{{ anchor_day }}">
                         <input type="hidden" name="date" value="{{ selected_date|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}">
                         <input type="hidden" name="mode" value="{{ view_mode }}">
                         <div class="col-sm-5">

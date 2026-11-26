@@ -3,19 +3,24 @@ import csv
 import io
 import json
 from datetime import date, datetime, timedelta
+from hashlib import sha256
 from time import sleep
 from urllib.parse import urlencode
+from uuid import UUID, uuid4
 
+from django import forms
 from django.contrib import messages
 from django.contrib.auth import login, logout
 from django.contrib.auth.decorators import login_required
-from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
+from django.contrib.auth.forms import AuthenticationForm
+from django.core.exceptions import ValidationError
 from django.db import OperationalError, connection, transaction
 from django.db.models import Q, Sum
-from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
+from django.http import Http404, HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_http_methods, require_POST
 
 from .forms import (
@@ -24,6 +29,8 @@ from .forms import (
     DailyCaloriesForm,
     ExerciseForm,
     ExerciseResultForm,
+    RecoveryEmailForm,
+    RegistrationForm,
     SafeDataDeleteForm,
     TemplateExerciseForm,
     TemplateUseForm,
@@ -31,6 +38,7 @@ from .forms import (
     WorkoutTemplateForm,
 )
 from .models import (
+    CreateSubmission,
     DailyCalories,
     Exercise,
     ExerciseResult,
@@ -108,7 +116,7 @@ def register_view(request):
     if request.user.is_authenticated:
         return redirect("dashboard")
 
-    form = UserCreationForm(request.POST or None)
+    form = RegistrationForm(request.POST if request.method == 'POST' else None)
     if request.method == "POST" and form.is_valid():
         user = form.save()
         login(request, user)
@@ -122,12 +130,15 @@ def login_view(request):
     if request.user.is_authenticated:
         return redirect("dashboard")
 
-    form = AuthenticationForm(request, data=request.POST or None)
+    form = AuthenticationForm(request, data=request.POST if request.method == "POST" else None)
     if request.method == "POST" and form.is_valid():
         login(request, form.get_user())
+        next_url = request.POST.get("next")
+        if url_has_allowed_host_and_scheme(next_url, {request.get_host()}, request.is_secure()):
+            return redirect(next_url)
         return redirect("dashboard")
 
-    return render(request, "workout/login.html", {"form": form})
+    return render(request, "workout/login.html", {"form": form, "next": request.POST.get("next", request.GET.get("next", ""))})
 
 
 @require_POST
@@ -249,9 +260,10 @@ def dashboard_view(request):
         .filter(Q(workout__isnull=True) | Q(workout__status=Workout.Status.COMPLETED))
         .select_related("workout")
     )
-    selected_day_total_calories = (
-        selected_day_calorie_logs.aggregate(total=Sum("calories_burned"))["total"] or 0
-    )
+    selected_day_calorie_logs = list(selected_day_calorie_logs)
+    workout_calorie_logs = [entry for entry in selected_day_calorie_logs if entry.workout_id]
+    activity_calorie_logs = [entry for entry in selected_day_calorie_logs if not entry.workout_id]
+    selected_day_total_calories = sum(entry.calories_burned for entry in selected_day_calorie_logs)
 
     total_completed_workouts = Workout.objects.filter(
         user=request.user, status=Workout.Status.COMPLETED
@@ -283,6 +295,10 @@ def dashboard_view(request):
         "can_navigate_next": can_navigate_next,
         "selected_day_workouts": selected_day_workouts,
         "selected_day_calorie_logs": selected_day_calorie_logs,
+        "workout_calorie_logs": workout_calorie_logs,
+        "activity_calorie_logs": activity_calorie_logs,
+        "workout_submission_token": uuid4(),
+        "calorie_submission_token": uuid4(),
         "selected_day_total_calories": selected_day_total_calories,
         "total_completed_workouts": total_completed_workouts,
         "week_total_calories": week_total_calories,
@@ -296,44 +312,121 @@ def dashboard_view(request):
     return render(request, "workout/dashboard.html", context)
 
 
+def _render_entry_form(request, form, title, selected_date, *, token=None, description=None):
+    for name, field in form.fields.items():
+        input_type = getattr(field.widget, "input_type", None)
+        if form.has_error(name) and input_type in {"date", "time", "number"}:
+            # Native date and number fields discard malformed strings on render.
+            field.widget = forms.TextInput(attrs={"inputmode": "decimal"} if input_type == "number" else {})
+        field.widget.attrs["class"] = "form-select" if isinstance(field.widget, forms.Select) else "form-control"
+    period = request.POST if request.method == "POST" else request.GET
+    return render(request, "workout/entry_form.html", {
+        "form": form,
+        "heading": title,
+        "description": description,
+        "selected_date": selected_date,
+        "view_mode": _normalize_view_mode(period.get("mode")),
+        "anchor_day": _parse_anchor_day(period.get("day"), selected_date.day),
+        "submission_token": token,
+    })
+
+
+def _add_model_errors(form, error):
+    if hasattr(error, "error_dict"):
+        for name, errors in error.error_dict.items():
+            field = "workout_id" if name == "workout" else name
+            form.add_error(field if field in form.fields else None, errors)
+    else:
+        form.add_error(None, error)
+
+
+def _submission_key(request, form, valid):
+    token = request.POST.get("submission_token")
+    if "submission_token" in request.POST:
+        try:
+            parsed_token = UUID(token)
+        except (ValueError, AttributeError):
+            form.add_error(None, "Не удалось распознать отправку. Проверьте поля и отправьте форму ещё раз.")
+            return None, uuid4()
+        return parsed_token.hex if valid else None, parsed_token
+
+    # Older clients omitted the token. Their exact payload still gets a stable key.
+    payload = json.dumps({name: request.POST.get(name, "") for name in form.fields}, sort_keys=True)
+    return sha256(payload.encode()).hexdigest() if valid else None, uuid4()
+
+
+def _save_once(request, action, key, target_date, save):
+    for attempt in range(5):
+        try:
+            with transaction.atomic():
+                submission, created = CreateSubmission.objects.get_or_create(
+                    user=request.user, action=action, key=key,
+                    defaults={"redirect_date": target_date},
+                )
+                if created:
+                    actual_date, notice = save()
+                    if actual_date != submission.redirect_date:
+                        submission.redirect_date = actual_date
+                        submission.save(update_fields=["redirect_date"])
+                else:
+                    notice = "Эта отправка уже была обработана."
+            messages.success(request, notice)
+            return _dashboard_redirect(
+                submission.redirect_date, request.POST.get("mode"), submission.redirect_date.day,
+            )
+        except OperationalError as error:
+            if connection.vendor != "sqlite" or "locked" not in str(error).lower() or attempt == 4:
+                raise
+            sleep(0.05 * (attempt + 1))
+
+
 @login_required
-@require_POST
+@require_http_methods(["GET", "POST"])
 def workout_create_view(request):
-    fallback_date = _parse_selected_date(request.POST.get("date"))
-    view_mode = request.POST.get("mode")
-    form = WorkoutForm(request.POST)
+    data = request.POST if request.method == "POST" else None
+    selected_date = _parse_selected_date((data if data is not None else request.GET).get("date"))
+    form = WorkoutForm(data, initial={"date": selected_date, "time": "18:30"})
+    token = uuid4()
+    if data is not None:
+        key, token = _submission_key(request, form, form.is_valid())
+        if key:
+            def save():
+                fresh_form = WorkoutForm(data)
+                workout = fresh_form.save(user=request.user)
+                target_date = timezone.localtime(workout.scheduled_at).date()
+                return target_date, f"Тренировка «{workout.title}» добавлена в план."
 
-    if form.is_valid():
-        workout = form.save(user=request.user)
-        target_date = timezone.localtime(workout.scheduled_at).date()
-        messages.success(request, f"Тренировка «{workout.title}» добавлена в план.")
-        return _dashboard_redirect(target_date, view_mode)
-
-    _flash_form_errors(request, form)
-    return _dashboard_redirect(fallback_date, view_mode)
+            try:
+                return _save_once(request, "workout", key, selected_date, save)
+            except ValidationError as error:
+                _add_model_errors(form, error)
+    return _render_entry_form(request, form, "Запланировать тренировку", selected_date, token=token)
 
 
 @login_required
-@require_POST
+@require_http_methods(["GET", "POST"])
 def workout_update_view(request, workout_id: int):
-    view_mode = request.POST.get("mode")
-
-    with transaction.atomic():
-        workout = get_object_or_404(
-            Workout.objects.select_for_update(), id=workout_id, user=request.user
-        )
-        current_date = timezone.localtime(workout.scheduled_at).date()
-        form = WorkoutForm(request.POST, instance=workout)
-        if form.is_valid():
-            updated = form.save()
-            new_date = timezone.localtime(updated.scheduled_at).date()
-            if new_date != current_date:
-                updated.calorie_entries.update(date=new_date)
-            messages.success(request, f"Тренировка «{updated.title}» обновлена.")
-            return _dashboard_redirect(new_date, view_mode)
-
-    _flash_form_errors(request, form)
-    return _dashboard_redirect(current_date, view_mode)
+    if request.method == "POST":
+        try:
+            with transaction.atomic():
+                workout = get_object_or_404(
+                    Workout.objects.select_for_update(), id=workout_id, user=request.user,
+                )
+                current_date = timezone.localtime(workout.scheduled_at).date()
+                form = WorkoutForm(request.POST, instance=workout)
+                if form.is_valid():
+                    updated = form.save()
+                    new_date = timezone.localtime(updated.scheduled_at).date()
+                    messages.success(request, f"Тренировка «{updated.title}» обновлена.")
+                    return _dashboard_redirect(new_date, request.POST.get("mode"), new_date.day)
+        except ValidationError as error:
+            _add_model_errors(form, error)
+    else:
+        workout = _get_user_workout(request.user, workout_id)
+        scheduled = timezone.localtime(workout.scheduled_at)
+        current_date = scheduled.date()
+        form = WorkoutForm(instance=workout, initial={"date": current_date, "time": scheduled.time()})
+    return _render_entry_form(request, form, "Редактировать тренировку", current_date)
 
 
 @login_required
@@ -383,43 +476,46 @@ def workout_toggle_status_view(request, workout_id: int):
 
 
 @login_required
-@require_POST
+@require_http_methods(["GET", "POST"])
 def exercise_create_view(request, workout_id: int):
     workout = _get_user_workout(request.user, workout_id)
-    w_date = timezone.localtime(workout.scheduled_at).date()
-    view_mode = request.POST.get("mode")
-
-    form = ExerciseForm(request.POST)
+    workout_date = timezone.localtime(workout.scheduled_at).date()
+    data = request.POST if request.method == "POST" else None
+    form = ExerciseForm(data)
     if form.is_valid():
         exercise = form.save(commit=False)
         exercise.workout = workout
         exercise.order = workout.exercises.count() + 1
-        exercise.save()
-        messages.success(request, f"Упражнение «{exercise.name}» добавлено.")
-    else:
-        _flash_form_errors(request, form)
-
-    return _dashboard_redirect(w_date, view_mode)
+        try:
+            exercise.save()
+        except ValidationError as error:
+            _add_model_errors(form, error)
+        else:
+            messages.success(request, f"Упражнение «{exercise.name}» добавлено.")
+            return _dashboard_redirect(workout_date, request.POST.get("mode"))
+    return _render_entry_form(request, form, "Добавить упражнение", workout_date, description=workout.title)
 
 
 @login_required
-@require_POST
+@require_http_methods(["GET", "POST"])
 def exercise_update_view(request, exercise_id: int):
-    with transaction.atomic():
-        exercise = get_object_or_404(
-            Exercise.objects.select_related("workout"),
-            id=exercise_id,
-            workout__user=request.user,
-        )
-        w_date = timezone.localtime(exercise.workout.scheduled_at).date()
-        form = ExerciseForm(request.POST, instance=exercise)
-        if form.is_valid():
+    exercise = get_object_or_404(
+        Exercise.objects.select_related("workout"), id=exercise_id, workout__user=request.user,
+    )
+    workout_date = timezone.localtime(exercise.workout.scheduled_at).date()
+    data = request.POST if request.method == "POST" else None
+    form = ExerciseForm(data, instance=exercise)
+    if form.is_valid():
+        try:
             updated = form.save()
+        except ValidationError as error:
+            _add_model_errors(form, error)
+        else:
             messages.success(request, f"Упражнение «{updated.name}» обновлено.")
-            return _dashboard_redirect(w_date, request.POST.get("mode"))
-
-    _flash_form_errors(request, form)
-    return _dashboard_redirect(w_date, request.POST.get("mode"))
+            return _dashboard_redirect(workout_date, request.POST.get("mode"))
+    return _render_entry_form(
+        request, form, "Редактировать упражнение", workout_date, description=exercise.workout.title,
+    )
 
 
 @login_required
@@ -434,80 +530,88 @@ def exercise_delete_view(request, exercise_id: int):
     return _dashboard_redirect(w_date, view_mode)
 
 
+def _calorie_workout_options(user, selected_date, submitted_id=None):
+    choices = [("", "Общая активность за день")]
+    workouts = Workout.objects.filter(user=user, status=Workout.Status.COMPLETED).filter(
+        Q(scheduled_at__date=selected_date) | Q(pk=submitted_id)
+    )
+    choices.extend((w.pk, f"{w.title} · {timezone.localtime(w.scheduled_at):%d.%m.%Y %H:%M}") for w in workouts)
+    return choices
+
+
 @login_required
-@require_POST
+@require_http_methods(["GET", "POST"])
 def calorie_create_view(request):
-    fallback_date = _parse_selected_date(request.POST.get("date"))
-    view_mode = request.POST.get("mode")
+    data = request.POST if request.method == "POST" else None
+    selected_date = _parse_selected_date((data if data is not None else request.GET).get("date"))
+    form = DailyCaloriesForm(data, initial={"date": selected_date})
+    token = uuid4()
+    workout_id = None
+    if data is not None:
+        key, token = _submission_key(request, form, form.is_valid())
+        workout_id = form.cleaned_data.get("workout_id")
+        if key:
+            def save():
+                entry = DailyCalories(user=request.user, date=form.cleaned_data.get("date") or selected_date)
+                if workout_id:
+                    linked_workout = Workout.objects.select_for_update().filter(
+                        id=workout_id, user=request.user,
+                    ).first()
+                    if linked_workout is None:
+                        if "submission_token" not in data:
+                            raise Http404
+                        raise ValidationError({"workout": "Выберите доступную тренировку."})
+                    entry = DailyCalories.objects.filter(
+                        user=request.user, workout=linked_workout,
+                    ).first() or entry
+                    entry.workout = linked_workout
+                entry.calories_burned = form.cleaned_data["calories_burned"]
+                entry.activity_note = form.cleaned_data["activity_note"]
+                entry.save()
+                return entry.date, f"Учтено {entry.calories_burned} ккал за {entry.date:%d.%m.%Y}."
 
-    form = DailyCaloriesForm(request.POST)
-    if not form.is_valid():
-        _flash_form_errors(request, form)
-        return _dashboard_redirect(fallback_date, view_mode)
-
-    workout_id = form.cleaned_data.get("workout_id")
-    target_date = form.cleaned_data.get("date") or fallback_date
-
-    if workout_id:
-        for attempt in range(5):
             try:
-                with transaction.atomic():
-                    linked_workout = get_object_or_404(
-                        Workout.objects.select_for_update(),
-                        id=workout_id,
-                        user=request.user,
-                    )
-                    target_date = timezone.localtime(linked_workout.scheduled_at).date()
-                    if linked_workout.status != Workout.Status.COMPLETED:
-                        messages.error(
-                            request,
-                            "Калории можно записать только для завершённой тренировки.",
-                        )
-                        return _dashboard_redirect(target_date, view_mode)
+                return _save_once(request, "calorie", key, selected_date, save)
+            except ValidationError as error:
+                _add_model_errors(form, error)
 
-                    existing_entries = list(
-                        DailyCalories.objects.filter(workout=linked_workout).order_by("pk")[:2]
-                    )
-                    if len(existing_entries) > 1:
-                        messages.error(
-                            request,
-                            "Для тренировки уже есть несколько записей калорий. "
-                            "Удалите лишние записи перед обновлением.",
-                        )
-                        return _dashboard_redirect(target_date, view_mode)
+    form.fields["workout_id"].widget.choices = _calorie_workout_options(
+        request.user, selected_date, workout_id,
+    )
+    return _render_entry_form(request, form, "Добавить расход калорий", selected_date, token=token)
 
-                    if existing_entries:
-                        entry = existing_entries[0]
-                        entry.calories_burned = form.cleaned_data["calories_burned"]
-                        entry.activity_note = form.cleaned_data["activity_note"]
-                        entry.date = target_date
-                    else:
-                        entry = form.save(commit=False)
-                        entry.user = request.user
-                        entry.workout = linked_workout
-                        entry.date = target_date
-                    entry.save()
-                break
-            except OperationalError as error:
-                if (
-                    connection.vendor != "sqlite"
-                    or "locked" not in str(error).lower()
-                    or attempt == 4
-                ):
-                    raise
-                sleep(0.05 * (attempt + 1))
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def calorie_update_view(request, calorie_id: int):
+    entry = get_object_or_404(
+        DailyCalories.objects.filter(Q(workout__isnull=True) | Q(workout__user=request.user)),
+        id=calorie_id, user=request.user,
+    )
+    original_date = entry.date
+    data = request.POST.copy() if request.method == "POST" else None
+    if data is not None:
+        data.pop("workout_id", None)
+        if entry.workout_id:
+            data["date"] = entry.date.isoformat()
+    form = DailyCaloriesForm(data, instance=entry)
+    del form.fields["workout_id"]
+    if entry.workout_id:
+        del form.fields["date"]
     else:
-        if target_date > timezone.localdate():
-            messages.error(request, "Нельзя добавить запись калорий за будущую дату.")
-            return _dashboard_redirect(fallback_date, view_mode)
-        entry = form.save(commit=False)
-        entry.user = request.user
-        entry.workout = None
-        entry.date = target_date
-        entry.save()
-
-    messages.success(request, f"Учтено {entry.calories_burned} ккал за {target_date:%d.%m.%Y}.")
-    return _dashboard_redirect(target_date, view_mode)
+        form.fields["date"].required = True
+    if form.is_valid():
+        try:
+            updated = form.save()
+        except ValidationError as error:
+            _add_model_errors(form, error)
+        else:
+            messages.success(request, "Запись калорий обновлена.")
+            return _dashboard_redirect(updated.date, request.POST.get("mode"), updated.date.day)
+    return _render_entry_form(
+        request, form, "Редактировать расход калорий", original_date,
+        description=str(entry.workout) if entry.workout_id else "Общая активность за день",
+    )
 
 
 @login_required
@@ -728,7 +832,7 @@ def exercise_result_add_view(request, exercise_id):
 
 
 @login_required
-def account_data_view(request):
+def settings_view(request, recovery_form=None):
     user = request.user
     context = {
         "workouts_count": Workout.objects.filter(user=user).count(),
@@ -740,9 +844,23 @@ def account_data_view(request):
         "calories_count": DailyCalories.objects.filter(user=user)
         .filter(Q(workout__isnull=True) | Q(workout__user=user))
         .count(),
-        "delete_form": SafeDataDeleteForm(user=user),
+        "recovery_form": recovery_form if recovery_form is not None else RecoveryEmailForm(
+            user, initial={"email": user.email},
+        ),
     }
     return render(request, "workout/account_data.html", context)
+
+
+@login_required
+@require_POST
+def recovery_email_view(request):
+    form = RecoveryEmailForm(request.user, request.POST)
+    if not form.is_valid():
+        return settings_view(request, recovery_form=form)
+    request.user.email = form.cleaned_data["email"]
+    request.user.save(update_fields=["email"])
+    messages.success(request, "Адрес для восстановления доступа сохранён.")
+    return redirect("settings")
 
 
 @login_required
@@ -945,7 +1063,7 @@ def delete_user_data_view(request):
     form = SafeDataDeleteForm(user=request.user, data=request.POST)
     if not form.is_valid():
         _flash_form_errors(request, form)
-        return redirect("account_data")
+        return redirect("settings")
 
     user = request.user
     if (
@@ -956,7 +1074,7 @@ def delete_user_data_view(request):
             request,
             "Удаление административного аккаунта через эту форму запрещено.",
         )
-        return redirect("account_data")
+        return redirect("settings")
 
     has_misowned_results = (
         ExerciseResult.objects.filter(workout__user=user)
@@ -980,7 +1098,7 @@ def delete_user_data_view(request):
             "Удаление остановлено: обнаружены связанные данные, которые не принадлежат "
             "этому аккаунту. Обратитесь к администратору.",
         )
-        return redirect("account_data")
+        return redirect("settings")
 
     with transaction.atomic():
         ExerciseResult.objects.filter(user=user, workout__user=user).filter(
@@ -1003,7 +1121,7 @@ def delete_user_data_view(request):
         request,
         "Ваши тренировки, результаты подходов, шаблоны и записи калорий удалены.",
     )
-    return redirect("account_data")
+    return redirect("settings")
 
 
 @login_required
@@ -1021,11 +1139,11 @@ def export_data_view(request):
             date_to = date.fromisoformat(date_to) if date_to else None
         except ValueError:
             messages.error(request, "Некорректный диапазон дат.")
-            return render(request, "workout/export.html", {"today": timezone.localdate()})
+            return settings_view(request)
 
         if date_from and date_to and date_from > date_to:
             messages.error(request, "Дата начала не может быть позже даты окончания.")
-            return render(request, "workout/export.html", {"today": timezone.localdate()})
+            return settings_view(request)
 
         rows = []
         if include_workouts:
@@ -1132,7 +1250,7 @@ def export_data_view(request):
 
         if not rows:
             messages.error(request, "За выбранный период нет данных для экспорта.")
-            return render(request, "workout/export.html", {"today": timezone.localdate()})
+            return settings_view(request)
 
         filename = f"pulseplan_export_{timezone.localdate().isoformat()}"
         if export_format == "json":
@@ -1170,4 +1288,4 @@ def export_data_view(request):
         )
         return response
 
-    return render(request, "workout/export.html", {"today": timezone.localdate()})
+    return settings_view(request)
