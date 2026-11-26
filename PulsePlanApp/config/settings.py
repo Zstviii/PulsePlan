@@ -39,6 +39,13 @@ DEBUG = _get_bool_env("DJANGO_DEBUG", default=False)
 _raw_hosts = os.environ.get("DJANGO_ALLOWED_HOSTS", "")
 ALLOWED_HOSTS = [host.strip() for host in _raw_hosts.split(",") if host.strip()]
 
+_raw_csrf_origins = os.environ.get("DJANGO_CSRF_TRUSTED_ORIGINS", "")
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip().rstrip("/")
+    for origin in _raw_csrf_origins.split(",")
+    if origin.strip()
+]
+
 if not ALLOWED_HOSTS:
     if DEBUG:
         ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
@@ -129,6 +136,9 @@ LOGIN_REDIRECT_URL = "dashboard"
 LOGOUT_REDIRECT_URL = "login"
 
 if not DEBUG:
+    # Заголовок безопасно доверять только при доступе к Django через настроенный прокси.
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SECURE_SSL_REDIRECT = True
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
