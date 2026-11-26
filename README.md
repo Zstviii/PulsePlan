@@ -123,18 +123,100 @@ DJANGO_CSRF_TRUSTED_ORIGINS=https://pulseplan.treidendev.ru
 
 При `DJANGO_DEBUG=False` Django доверяет `X-Forwarded-Proto: https`, перенаправляет HTTP на HTTPS и выставляет secure-флаги для session и CSRF cookies. Не включайте этот proxy-заголовок, если приложение доступно клиентам в обход настроенного Nginx. Не используйте `runserver` для production.
 
-### Проверки и запуск Django
+### Обновление существующего сайта без прав администратора
 
-Из каталога `PulsePlanApp/` с активированным виртуальным окружением выполните:
+Следующие шаги предназначены для обновления уже работающего сайта от пользователя `pulseplan`. Они не требуют `sudo` и не удаляют локальные настройки, базу или собранную статику. Если любая проверка не проходит, остановитесь и согласуйте дальнейшие действия с администратором.
+
+Подключитесь к серверу и перейдите в корень репозитория:
 
 ```sh
+ssh pulseplan@<адрес-сервера>
+cd /srv/student-projects/pulseplan
+```
+
+Сначала проверьте рабочую копию и обновления на GitHub:
+
+```sh
+git status --short --branch
+git fetch origin
+git diff --name-status HEAD..origin/main
+```
+
+Если есть изменения отслеживаемых файлов в рабочей копии, не переключайте ветки и не обновляйте код, пока эти изменения не будут разобраны. Не запускайте `git reset --hard` или `git clean`: неотслеживаемые `.env`, резервные копии базы и `staticfiles/` нужно сохранить. Если список обновляемых файлов включает `PulsePlanApp/config/settings.py`, отдельно сохраните текущий файл и проверьте production-параметры `.env`; не восстанавливайте старый файл поверх новой версии без проверки.
+
+```sh
+cd /srv/student-projects/pulseplan/PulsePlanApp
+umask 077
+python3 - <<'PY'
+import sqlite3
+from datetime import datetime
+from pathlib import Path
+
+source = sqlite3.connect("db.sqlite3")
+backup_path = Path.home() / f"db.sqlite3.pre-update-{datetime.now():%Y%m%d-%H%M%S}"
+target = sqlite3.connect(backup_path)
+source.backup(target)
+target.close()
+source.close()
+print(f"Резервная копия создана: {backup_path}")
+PY
+```
+
+Перед обновлением убедитесь, что `.env` содержит production-настройки, не выводя его содержимое в терминал или чат:
+
+```dotenv
+DJANGO_SECRET_KEY=<длинный-случайный-секретный-ключ>
+DJANGO_DEBUG=False
+DJANGO_ALLOWED_HOSTS=pulseplan.treidendev.ru
+DJANGO_CSRF_TRUSTED_ORIGINS=https://pulseplan.treidendev.ru
+```
+
+Если в обновлении затрагивается `config/settings.py`, можно сохранить текущий файл с закрытыми правами до `git pull`:
+
+```sh
+umask 077
+cp config/settings.py "$HOME/pulseplan-settings.py.pre-update-$(date +%Y%m%d-%H%M%S)"
+```
+
+Затем обновите код только fast-forward-операцией, установите зависимости в виртуальное окружение и выполните проверки, миграции и сборку статики:
+
+```sh
+cd /srv/student-projects/pulseplan
+git pull --ff-only origin main
+
+cd /srv/student-projects/pulseplan/PulsePlanApp
+source .venv/bin/activate
+python -m pip install -r requirements.txt
 python manage.py check --deploy
 python manage.py migrate --noinput
 python manage.py collectstatic --noinput
-gunicorn --bind 127.0.0.1:8000 config.wsgi:application
 ```
 
-`check --deploy` выводит предупреждения о незаданных production-параметрах, которые нужно оценить перед публикацией. Предупреждение `security.W004` ожидаемо: HSTS здесь намеренно не включён, пока отдельно не подтверждено постоянное HTTPS-обслуживание домена и нужных поддоменов. Gunicorn здесь запускается на loopback-интерфейсе только для проверки; для постоянного запуска администратор должен согласовать и настроить systemd unit и права пользователя сервиса.
+Оцените все сообщения `check --deploy`. Предупреждение `security.W004` об отключённом HSTS ожидаемо для текущей конфигурации; не включайте HSTS без отдельной проверки постоянного HTTPS для домена и поддоменов. Не продолжайте при ошибках проверок, миграций или сборки статики.
+
+Для graceful reload без `sudo` сначала проверьте PID главного процесса systemd-службы и его владельца:
+
+```sh
+pid=$(systemctl show pulseplan.service -p MainPID --value)
+ps -o pid=,user:20=,comm= -p "$pid"
+```
+
+Продолжайте только если вывод показывает пользователя `pulseplan` и процесс `gunicorn`. В противном случае не отправляйте сигнал и попросите администратора перезапустить службу. Если владелец и процесс совпадают:
+
+```sh
+kill -HUP "$pid"
+systemctl is-active pulseplan.service
+```
+
+Ожидаемый статус — `active`. `HUP` просит master-процесс Gunicorn штатно перезапустить workers и перечитать код, но не перезапускает сам master и не заменяет полноценный перезапуск после обновления пакета Gunicorn. Если команда недоступна или завершается ошибкой, не пытайтесь обходить ограничения прав: обратитесь к администратору, чтобы он выполнил перезапуск systemd-службы.
+
+Проверьте страницу входа с сервера:
+
+```sh
+curl --fail -sS -o /dev/null -w 'HTTP %{http_code}\n' https://pulseplan.treidendev.ru/login/
+```
+
+Ожидаемый ответ — `HTTP 200`. Если проверка не проходит, не удаляйте резервную копию; проверьте доступные вам логи и согласуйте восстановление с администратором. Если браузер показывает старую статику, выполните жёсткую перезагрузку страницы.
 
 ### Что согласовать с администратором Nginx
 
@@ -142,7 +224,7 @@ gunicorn --bind 127.0.0.1:8000 config.wsgi:application
 - Nginx завершает HTTPS, перенаправляет HTTP на HTTPS и проксирует приложение на `127.0.0.1:8000`.
 - Для upstream Nginx должен передавать исходный `Host`, `X-Forwarded-For` и выставлять `X-Forwarded-Proto $scheme`. Входящий от клиента `X-Forwarded-Proto` нужно перезаписывать, а не принимать как доверенный.
 - Порт Gunicorn не должен быть открыт извне. Nginx должен отдавать собранную статику из `PulsePlanApp/staticfiles/` по URL-префиксу `/static/`.
-- Конфигурации Nginx и systemd, пользователь процесса, права на SQLite и резервное копирование согласуются с администратором сервера; этот репозиторий не управляет ими.
+- Конфигурации Nginx и systemd, пользователь процесса, права на SQLite и резервное копирование согласуются с администратором сервера; этот репозиторий не управляет ими. Без административных прав graceful reload возможен только если главный процесс Gunicorn принадлежит пользователю `pulseplan`; иначе перезапуск должен выполнить администратор.
 
 ### Проверка опубликованного сайта
 
