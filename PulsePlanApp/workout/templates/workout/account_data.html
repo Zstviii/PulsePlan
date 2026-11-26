@@ -1,11 +1,11 @@
 {% extends "workout/base.html" %}
-{% block title %}Управление данными — PulsePlan{% endblock %}
+{% block title %}Настройки — PulsePlan{% endblock %}
 {% block content %}
 
 <section class="dashboard-intro">
     <div>
         <p class="eyebrow">ПРИВАТНОСТЬ И ДАННЫЕ</p>
-        <h1 class="page-title">Экспорт и удаление данных</h1>
+        <h1 class="page-title">Настройки</h1>
         <p class="page-subtitle">Выгружай резервные копии тренировок или безопасно очищай свой профиль.</p>
     </div>
     <a href="{% url 'dashboard' %}" class="btn btn-secondary-action">← В календарь</a>
@@ -36,6 +36,17 @@
 
 <section class="content-grid">
     <div class="content-main">
+        <section class="panel mb-4" id="recovery-email">
+            <div class="panel-heading"><h2 class="section-title">Данные аккаунта</h2></div>
+            <div class="panel-body">
+                <p>Укажите адрес, на который будет приходить ссылка для сброса пароля.</p>
+                <form method="post" action="{% url 'recovery_email' %}" class="stacked-form auth-form">
+                    {% csrf_token %}
+                    {{ recovery_form.as_p }}
+                    <button type="submit" class="btn btn-primary-action">Сохранить адрес</button>
+                </form>
+            </div>
+        </section>
         <section class="panel mb-4">
             <div class="panel-heading">
                 <div>
@@ -52,6 +63,13 @@
                     <a href="{% url 'export_user_data' %}?format=json" class="btn btn-primary-action">Скачать JSON (полный архив)</a>
                     <a href="{% url 'export_user_data' %}?format=csv" class="btn btn-secondary-action">Скачать CSV (для Excel)</a>
                 </div>
+            </div>
+        </section>
+        <section class="panel mb-4" id="period-export">
+            <div class="panel-heading"><h2 class="section-title">Экспорт за период</h2></div>
+            <div class="panel-body">
+                <p>Выберите период, данные и формат файла.</p>
+                {% include "workout/export.html" %}
             </div>
         </section>
     </div>

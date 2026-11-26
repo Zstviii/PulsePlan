@@ -3,7 +3,7 @@ import uuid
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
-from django.db import models
+from django.db import models, router, transaction
 from django.db.models import Sum
 from django.utils import timezone
 
@@ -57,17 +57,24 @@ class Workout(models.Model):
 
     def save(self, *args, **kwargs):
         self.full_clean()
-        if self.pk:
-            current_status = type(self).objects.filter(pk=self.pk).values_list(
-                "status", flat=True
-            ).first()
-            if current_status is not None and not self.can_transition(
-                current_status, self.status
-            ):
+        if not self.pk:
+            return super().save(*args, **kwargs)
+
+        database = kwargs.get("using") or router.db_for_write(type(self), instance=self)
+        with transaction.atomic(using=database):
+            current_status = (
+                type(self).objects.using(database).select_for_update()
+                .filter(pk=self.pk).values_list("status", flat=True).first()
+            )
+            if current_status is not None and not self.can_transition(current_status, self.status):
                 raise ValidationError(
                     {"status": f"Недопустимый переход статуса: {current_status} → {self.status}."}
                 )
-        super().save(*args, **kwargs)
+            super().save(*args, **kwargs)
+            update_fields = kwargs.get("update_fields")
+            if update_fields is None or "scheduled_at" in update_fields:
+                workout_date = timezone.localtime(self.scheduled_at).date()
+                self.calorie_entries.using(database).exclude(date=workout_date).update(date=workout_date)
 
     @property
     def total_calories(self) -> int:
@@ -174,18 +181,41 @@ class DailyCalories(models.Model):
             raise ValidationError(
                 {"workout": "Калории можно привязать только к завершённой тренировке."}
             )
-        if self.date and self.date > timezone.localdate():
+        if self.date and self.date > timezone.localdate() and (not self.workout_id or not self.pk):
             raise ValidationError({"date": "Нельзя добавить запись калорий за будущую дату."})
 
     def save(self, *args, **kwargs):
-        if self.workout_id:
+        if not self.workout_id:
+            self.full_clean()
+            return super().save(*args, **kwargs)
+        database = kwargs.get("using") or router.db_for_write(type(self), instance=self)
+        with transaction.atomic(using=database):
+            self.workout = Workout.objects.using(database).select_for_update().get(pk=self.workout_id)
             self.date = timezone.localtime(self.workout.scheduled_at).date()
-        self.full_clean()
-        super().save(*args, **kwargs)
+            self.full_clean()
+            if kwargs.get("update_fields") is not None:
+                kwargs["update_fields"] = {*kwargs["update_fields"], "date"}
+            super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         source = self.workout.title if self.workout else (self.activity_note or "Дневная активность")
         return f"{self.date:%d.%m.%Y}: {self.calories_burned} ккал ({source})"
+
+
+class CreateSubmission(models.Model):
+    """Identifies a processed create POST for a user and action."""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    action = models.CharField(max_length=16)
+    key = models.CharField(max_length=64)
+    redirect_date = models.DateField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "action", "key"], name="unique_create_submission",
+            )
+        ]
 
 
 class WorkoutTemplate(models.Model):

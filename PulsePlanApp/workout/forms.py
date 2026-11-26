@@ -2,6 +2,7 @@ from datetime import date, datetime, time
 import uuid
 
 from django import forms
+from django.contrib.auth.forms import UserCreationForm
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.utils import timezone
 
@@ -12,12 +13,42 @@ CALENDAR_MIN_DATE = date(1900, 1, 1)
 CALENDAR_MAX_DATE = date(2100, 12, 31)
 
 
+class RegistrationForm(UserCreationForm):
+    email = forms.EmailField(
+        label="Электронная почта",
+        required=False,
+        help_text="Укажите адрес, чтобы восстанавливать доступ к аккаунту.",
+    )
+
+    class Meta(UserCreationForm.Meta):
+        fields = ("username", "email")
+
+
+class RecoveryEmailForm(forms.Form):
+    email = forms.EmailField(label="Электронная почта", max_length=254)
+    password = forms.CharField(label="Текущий пароль", widget=forms.PasswordInput(
+        attrs={"autocomplete": "current-password"},
+    ))
+
+    def __init__(self, user, *args, **kwargs):
+        self.user = user
+        super().__init__(*args, **kwargs)
+
+    def clean_password(self):
+        password = self.cleaned_data["password"]
+        if not self.user.check_password(password):
+            raise forms.ValidationError("Неверный текущий пароль.")
+        return password
+
+
 class WorkoutForm(forms.ModelForm):
     """Форма создания и редактирования тренировки."""
 
     date = forms.DateField(
         required=False,
         input_formats=["%Y-%m-%d"],
+        label="Дата",
+        widget=forms.DateInput(format="%Y-%m-%d", attrs={"type": "date"}),
         validators=[
             MinValueValidator(CALENDAR_MIN_DATE),
             MaxValueValidator(CALENDAR_MAX_DATE),
@@ -31,12 +62,15 @@ class WorkoutForm(forms.ModelForm):
     time = forms.TimeField(
         required=False,
         input_formats=["%H:%M", "%H:%M:%S"],
+        label="Время",
+        widget=forms.TimeInput(format="%H:%M", attrs={"type": "time"}),
         error_messages={"invalid": "Некорректный формат времени (используйте ЧЧ:ММ)."},
     )
 
     class Meta:
         model = Workout
         fields = ["title", "notes"]
+        widgets = {"notes": forms.Textarea(attrs={"rows": 3})}
         error_messages = {
             "title": {
                 "required": "Укажите название тренировки.",
@@ -129,11 +163,16 @@ class ExerciseForm(forms.ModelForm):
 class DailyCaloriesForm(forms.ModelForm):
     """Форма добавления записи о потраченных калориях."""
 
-    workout_id = forms.IntegerField(required=False)
+    workout_id = forms.IntegerField(
+        required=False, label="Связанная тренировка", widget=forms.Select,
+        min_value=1, max_value=2**63 - 1,
+        help_text="Для связанной записи используется дата тренировки.",
+    )
 
     class Meta:
         model = DailyCalories
         fields = ["date", "calories_burned", "activity_note"]
+        widgets = {"date": forms.DateInput(format="%Y-%m-%d", attrs={"type": "date"})}
         error_messages = {
             "calories_burned": {
                 "required": "Укажите количество потраченных калорий.",
@@ -149,12 +188,16 @@ class DailyCaloriesForm(forms.ModelForm):
         self.fields["date"].required = False
         self.fields["activity_note"].required = False
 
-    def clean(self):
-        cleaned_data = super().clean()
-        target_date = cleaned_data.get("date")
-        if target_date and target_date > timezone.localdate():
+    def clean_date(self):
+        target_date = self.cleaned_data.get("date")
+        if (
+            target_date
+            and target_date > timezone.localdate()
+            and not self.data.get("workout_id")
+            and not self.instance.workout_id
+        ):
             raise forms.ValidationError("Нельзя добавить запись калорий за будущую дату.")
-        return cleaned_data
+        return target_date
 
 
 class WorkoutTemplateForm(forms.ModelForm):
