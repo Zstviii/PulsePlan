@@ -1,0 +1,82 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}PulsePlan — Дневник тренировок{% endblock %}</title>
+    <link rel="icon" href="{% static 'workout/img/pulseplan-app-icon.png' %}">
+    <link rel="stylesheet" href="{% static 'workout/vendor/bootstrap.min.css' %}">
+    <link rel="stylesheet" href="{% static 'workout/css/app.css' %}">
+</head>
+<body>
+<nav class="navbar navbar-expand-lg navbar-shell" aria-label="Основная навигация">
+    <div class="app-container">
+        <a class="navbar-brand brand-link" href="{% url 'welcome' %}">
+            <img class="brand-logo" src="{% static 'workout/img/pulseplan-logo-brandbook-white.png' %}" alt="PulsePlan">
+        </a>
+        <button class="navbar-toggler nav-toggle" type="button" data-bs-toggle="collapse"
+                data-bs-target="#pulseplanNavbar" aria-controls="pulseplanNavbar"
+                aria-expanded="false" aria-label="Меню">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="pulseplanNavbar">
+            <div class="navbar-nav ms-auto align-items-lg-center gap-2 nav-account">
+                {% with route=request.resolver_match.url_name %}
+                    {% if user.is_authenticated %}
+                        <a class="nav-link" href="{% url 'dashboard' %}" {% if route == 'dashboard' %}aria-current="page"{% endif %}>Календарь</a>
+                        <a class="nav-link" href="{% url 'template_list' %}" {% if route == 'template_list' %}aria-current="page"{% endif %}>Шаблоны</a>
+                        <a class="nav-link" href="{% url 'settings' %}" {% if route == 'settings' or route == 'account_data' or route == 'export_data' %}aria-current="page"{% endif %}>Настройки</a>
+                        <form method="post" action="{% url 'logout' %}" class="m-0">
+                            {% csrf_token %}
+                            <button type="submit" class="btn-nav-logout">Выйти</button>
+                        </form>
+                    {% else %}
+                        <a href="{% url 'login' %}" class="btn-nav-logout" {% if route == 'login' %}aria-current="page"{% endif %}>Войти</a>
+                        <a href="{% url 'register' %}" class="btn-nav-light" {% if route == 'register' %}aria-current="page"{% endif %}>Создать аккаунт</a>
+                    {% endif %}
+                {% endwith %}
+            </div>
+        </div>
+    </div>
+</nav>
+
+<main class="app-main" id="main-content">
+     {% if messages %}
+        {% for message in messages %}
+            <div class="alert alert-{% if message.tags == 'error' %}danger{% else %}{{ message.tags|default:'info' }}{% endif %} alert-dismissible fade show"
+                 role="{% if message.tags == 'error' %}alert{% else %}status{% endif %}"
+                 aria-live="{% if message.tags == 'error' %}assertive{% else %}polite{% endif %}">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Закрыть уведомление"></button>
+            </div>
+        {% endfor %}
+    {% endif %}
+    <p class="visually-hidden" id="calendar-status" role="status"></p>
+    {% block content %}{% endblock %}
+</main>
+<div class="modal fade" id="deleteConfirmModal" tabindex="-1" aria-labelledby="deleteConfirmTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header">
+        <h5 class="modal-title" id="deleteConfirmTitle">Подтвердить удаление</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+      </div>
+      <div class="modal-body">
+        <p id="deleteConfirmText" class="mb-2">Вы действительно хотите удалить этот объект?</p>
+        <div class="alert alert-warning small mb-0">
+          <span id="deleteConfirmWarning">Это действие нельзя отменить.</span>
+          <span id="deleteConfirmDetails"></span>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+        <button type="button" class="btn btn-danger" id="deleteConfirmButton">Удалить</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="{% static 'workout/vendor/bootstrap.bundle.min.js' %}" defer></script>
+<script src="{% static 'workout/js/app.js' %}" defer></script>
+</body>
+</html>

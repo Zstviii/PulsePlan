@@ -1,0 +1,52 @@
+{% extends "workout/base.html" %}
+{% block title %}PulsePlan — Твой ритм. Твой план.{% endblock %}
+{% block content %}
+<section class="welcome-hero">
+    <div class="welcome-copy">
+        <h1>Твой ритм.<br><span>Твой план.</span></h1>
+        <p>Запланируй первую тренировку дома или в зале. PulsePlan поможет собрать упражнения, выделить время и отслеживать прогресс.</p>
+        <div class="welcome-actions">
+            <a class="btn btn-primary-action" href="{% url 'register' %}">Создать аккаунт</a>
+            <a class="btn btn-secondary-action" href="{% url 'login' %}">Войти</a>
+        </div>
+    </div>
+    <section class="welcome-demo" aria-labelledby="demo-title">
+        <div class="welcome-demo-header">
+            <h2 id="demo-title">Пример твоей недели</h2>
+            <span>23–29 ноября</span>
+        </div>
+        <div class="demo-week" aria-label="Неделя с 23 по 29 ноября">
+            <span>Пн<strong>23</strong></span>
+            <span class="demo-workout-day">Вт<strong>24</strong></span>
+            <span>Ср<strong>25</strong></span>
+            <span class="demo-workout-day">Чт<strong>26</strong></span>
+            <span>Пт<strong>27</strong></span>
+            <span class="demo-workout-day">Сб<strong>28</strong></span>
+            <span>Вс<strong>29</strong></span>
+        </div>
+        <ul class="demo-agenda">
+            <li><div><span>Вторник · дома</span><strong>Тренировка на всё тело</strong></div><time>18:30</time></li>
+            <li><div><span>Четверг · в зале</span><strong>Силовая тренировка</strong></div><time>19:00</time></li>
+            <li><div><span>Суббота · дома</span><strong>Разминка и растяжка</strong></div><time>10:00</time></li>
+        </ul>
+    </section>
+</section>
+
+<section class="welcome-features" aria-labelledby="features-title">
+    <h2 id="features-title">Планируй занятия в своём темпе</h2>
+    <div class="welcome-features-grid">
+        <article>
+            <h3>Календарь</h3>
+            <p>Выбери день и удобное время. Если планы изменятся, перенеси занятие.</p>
+        </article>
+        <article>
+            <h3>Упражнения и шаблоны</h3>
+            <p>Записывай подходы, повторения и вес. Сохраняй тренировки, которые хочешь повторить.</p>
+        </article>
+        <article>
+            <h3>Учёт калорий</h3>
+            <p>Веди дневник расхода калорий за тренировку и за повседневную активность.</p>
+        </article>
+    </div>
+</section>
+{% endblock %}

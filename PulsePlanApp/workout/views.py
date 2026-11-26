@@ -147,6 +147,13 @@ def logout_view(request):
     return redirect("login")
 
 
+def welcome_view(request):
+    if request.user.is_authenticated:
+        query = request.GET.urlencode()
+        return redirect(f"{reverse('dashboard')}?{query}" if query else "dashboard")
+    return render(request, "workout/welcome.html")
+
+
 @login_required
 def dashboard_view(request):
     selected_date = _parse_selected_date(request.GET.get("date"))

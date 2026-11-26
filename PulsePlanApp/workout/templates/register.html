@@ -1,0 +1,20 @@
+{% extends "workout/base.html" %}
+{% load static %}
+{% block title %}Создать аккаунт — PulsePlan{% endblock %}
+{% block content %}
+<div class="auth-layout">
+    <section class="auth-card">
+        <img class="auth-brand-mark" src="{% static 'workout/img/pulseplan-symbol.png' %}" alt="" width="48" height="48">
+        <h1 class="auth-title">Создать аккаунт</h1>
+        <p class="auth-subtitle">Создайте профиль для планирования тренировок</p>
+        <form method="post" class="auth-form">
+            {% csrf_token %}
+            {{ form.as_p }}
+            <button type="submit" class="btn-primary-action">Создать аккаунт</button>
+        </form>
+        <p class="auth-switch">
+            Уже есть аккаунт? <a href="{% url 'login' %}">Войти</a>
+        </p>
+    </section>
+</div>
+{% endblock %}
