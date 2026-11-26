@@ -2,6 +2,7 @@
 {% load workout_extras %}
 {% block title %}Шаблоны тренировок — PulsePlan{% endblock %}
 {% block content %}
+<div class="template-page">
 <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
   <div><h1 class="h3 mb-1">Мои шаблоны</h1><p class="text-muted mb-0">Сохраняйте готовые тренировки и запускайте их повторно.</p></div>
   <a href="{% url 'template_create' %}" class="btn btn-primary">+ Создать шаблон</a>
@@ -17,7 +18,7 @@
         <ul class="small ps-3 mb-4">
           {% for ex in template.exercises.all %}<li>{{ ex.name }} — {{ ex.sets }}×{{ ex.reps }}{% if ex.weight_kg > 0 %}, {{ ex.weight_kg }} кг{% endif %}</li>{% empty %}<li>Упражнения не добавлены</li>{% endfor %}
         </ul>
-        <div class="mt-auto d-flex flex-wrap gap-2">
+        <div class="template-actions mt-auto">
           <a href="{% url 'template_use' template.id %}" class="btn btn-primary btn-sm">Использовать</a>
           <a href="{% url 'template_edit' template.id %}" class="btn btn-outline-secondary btn-sm">Изменить</a>
           <form method="post" action="{% url 'template_delete' template.id %}" data-delete-title="{{ template.name }}">
@@ -30,5 +31,6 @@
 {% empty %}
   <div class="col-12"><div class="card border-0 shadow-sm"><div class="card-body text-center py-5"><h2 class="h5">Шаблонов пока нет</h2><p class="text-muted">Создайте первую готовую тренировку.</p><a href="{% url 'template_create' %}" class="btn btn-primary">Создать шаблон</a></div></div></div>
 {% endfor %}
+</div>
 </div>
 {% endblock %}

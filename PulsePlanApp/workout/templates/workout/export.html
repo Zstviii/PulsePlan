@@ -1,4 +1,4 @@
-<form method="post" action="{% url 'export_data' %}" class="row g-3">{% csrf_token %}<div class="col-md-6">
+<form method="post" action="{% url 'export_data' %}" class="row g-3" data-download-form>{% csrf_token %}<div class="col-md-6">
 <label class="form-label" for="export-from">От</label>
 <input id="export-from" type="date" name="date_from" class="form-control">
 </div>

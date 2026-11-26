@@ -234,6 +234,7 @@ class TemplateUseForm(forms.Form):
         widget=forms.HiddenInput,
     )
     date = forms.DateField(
+        label="Дата",
         input_formats=["%Y-%m-%d"],
         widget=forms.DateInput(attrs={"type": "date", "class": "form-control"}),
         validators=[
@@ -247,6 +248,7 @@ class TemplateUseForm(forms.Form):
         },
     )
     time = forms.TimeField(
+        label="Время",
         input_formats=["%H:%M", "%H:%M:%S"],
         widget=forms.TimeInput(attrs={"type": "time", "class": "form-control"}),
         error_messages={"invalid": "Некорректное время."},
@@ -259,7 +261,6 @@ class TemplateUseForm(forms.Form):
                 if name in self.errors:
                     self.fields[name].widget.attrs.update(
                         {
-                            "class": "form-control is-invalid",
                             "aria-invalid": "true",
                             "aria-describedby": f"{name}-error",
                         }
