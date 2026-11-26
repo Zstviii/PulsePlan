@@ -164,7 +164,7 @@ class WorkoutOwnershipTests(TestCase):
             {"title": "   ", "date": "not-a-date", "time": "10:00"},
         )
 
-        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.status_code, 200)
         self.alice_workout.refresh_from_db()
         self.assertEqual(self.alice_workout.title, "Тренировка Алисы")
 
@@ -498,7 +498,7 @@ class CalendarAndSeedTests(TestCase):
             reverse("calorie_create"),
             {"date": future_date.isoformat(), "calories_burned": 250},
         )
-        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.status_code, 200)
         self.assertEqual(DailyCalories.objects.filter(user=self.user).count(), 0)
 
     def test_week_period_bounds_and_empty_week_flag(self):
@@ -1063,7 +1063,7 @@ class CalendarTransitionsAndLabelsTests(TestCase):
             reverse("calorie_create"),
             {"date": future_date.isoformat(), "calories_burned": 300},
         )
-        self.assertEqual(post_resp.status_code, 302)
+        self.assertEqual(post_resp.status_code, 200)
         self.assertEqual(DailyCalories.objects.filter(user=self.user).count(), 0)
 
 
@@ -2066,7 +2066,7 @@ class RegressionRoutesCsrfAndTemplatesTests(TestCase):
             {"title": "   ", "date": "2026-11-20", "time": "10:00"},
             follow=True,
         )
-        self.assertTemplateUsed(bad_workout, "workout/dashboard.html")
+        self.assertTemplateUsed(bad_workout, "workout/entry_form.html")
         self.assertContains(bad_workout, "Укажите название тренировки.")
 
         bad_calories = self.client.post(
@@ -2074,7 +2074,7 @@ class RegressionRoutesCsrfAndTemplatesTests(TestCase):
             {"date": "2026-11-20", "calories_burned": 25000},
             follow=True,
         )
-        self.assertTemplateUsed(bad_calories, "workout/dashboard.html")
+        self.assertTemplateUsed(bad_calories, "workout/entry_form.html")
         self.assertContains(bad_calories, "Значение не может превышать 20 000 ккал.")
 
     def test_repeated_posts_and_deletions_via_user_routes(self):
