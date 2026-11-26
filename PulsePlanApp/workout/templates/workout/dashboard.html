@@ -77,6 +77,7 @@
         </div>
     </div>
 
+    <p class="calendar-scroll-hint">Прокрутите календарь по горизонтали, чтобы увидеть все дни.</p>
     <div class="calendar-scroll">
         <table class="calendar-table">
             <thead>
@@ -89,25 +90,33 @@
                 <tr>
                     {% for day in week %}
                     <td class="calendar-cell {% if day.is_selected %}is-selected{% endif %} {% if day.is_today %}is-today{% endif %} {% if not day.in_current_month and view_mode == 'month' %}is-outside-month{% endif %} {% if not day.is_navigable %}is-unavailable{% endif %}"
-                        {% if day.is_navigable %}data-calendar-cell data-calendar-url="?date={{ day.date|date:'Y-m-d' }}&amp;mode={{ view_mode }}&amp;day={{ anchor_day }}" tabindex="0" role="link"{% else %}aria-disabled="true"{% endif %}
-                        aria-label="{{ day.date|date:'l, d.m.Y' }}{% if day.is_selected %}, выбранный день{% endif %}{% if day.is_today %}, сегодня{% endif %}">
+                        {% if day.is_navigable %}data-calendar-cell{% else %}aria-disabled="true"{% endif %}>
                         <div class="calendar-cell-top">
-                            <span class="calendar-day-number {% if day.is_today %}today-number{% endif %}">
-                                {{ day.date|date:"d" }}
-                            </span>
+                            {% if day.is_navigable %}
+                                <a class="calendar-day-number {% if day.is_today %}today-number{% endif %}"
+                                   href="?date={{ day.date|date:'Y-m-d' }}&amp;mode={{ view_mode }}&amp;day={{ day.date|date:'j' }}#selected-day"
+                                   data-calendar-navigation{% if day.is_selected %} aria-current="date"{% endif %}
+                                   aria-label="{{ day.date|date:'l, d.m.Y' }}{% if day.is_today %}, сегодня{% endif %}{% if day.workouts %}, {{ day.workouts|length|workout_count }}{% endif %}">
+                                    {{ day.date|date:"d" }}
+                                </a>
+                            {% else %}
+                                <span class="calendar-day-number">{{ day.date|date:"d" }}</span>
+                            {% endif %}
                             {% if day.workouts %}
-                                <span class="day-workout-count" aria-label="Тренировок: {{ day.workouts|length }}">{{ day.workouts|length }}</span>
+                                <span class="day-workout-count" aria-hidden="true">{{ day.workouts|length }}</span>
                             {% endif %}
                         </div>
 
                         <div class="calendar-events">
                         {% for w in day.workouts %}
-                            <div aria-label="{{ w.get_status_display }}: {{ w.scheduled_at|date:'H:i' }} {{ w.title }}"
+                            <a {% if day.is_navigable %}href="?date={{ day.date|date:'Y-m-d' }}&amp;mode={{ view_mode }}&amp;day={{ day.date|date:'j' }}#workout-{{ w.id }}" data-calendar-navigation{% endif %}
+                               aria-label="{{ w.get_status_display }}: {{ w.scheduled_at|date:'H:i' }} {{ w.title }}"
+                               title="{{ w.scheduled_at|date:'H:i' }} · {{ w.title }}"
                                class="calendar-event {% if w.status == 'completed' %}event-completed{% elif w.status == 'skipped' %}event-skipped{% else %}event-planned{% endif %}">
-                                <span class="event-time">{{ w.scheduled_at|date:"H:i" }}</span>
+                                <time class="event-time" datetime="{{ w.scheduled_at|date:'c' }}">{{ w.scheduled_at|date:"H:i" }}</time>
                                 <span class="event-name">{{ w.title }}</span>
                                 <span class="event-mark" aria-hidden="true">{% if w.status == 'completed' %}✓{% elif w.status == 'skipped' %}✕{% else %}◷{% endif %}</span>
-                            </div>
+                            </a>
                         {% endfor %}
                         </div>
                         {% if day.total_calories > 0 %}
@@ -136,7 +145,7 @@
     <div class="content-main">
         <section class="panel day-panel">
             <div class="panel-heading day-heading">
-                <h2 class="section-title">Тренировки на {{ selected_date|date:"d.m.Y" }}</h2>
+                <h2 class="section-title" id="selected-day" tabindex="-1">Тренировки на {{ selected_date|date:"d.m.Y" }}</h2>
                 <span class="day-total-pill">{{ selected_day_workouts|length|workout_count }}</span>
             </div>
             <div class="panel-body">
@@ -173,7 +182,7 @@
                 </div>
 
                 {% for workout in selected_day_workouts %}
-                    <article class="workout-card">
+                    <article class="workout-card" id="workout-{{ workout.id }}" tabindex="-1">
                         <header class="workout-card-header">
                             <div class="workout-heading-main">
                                 <span class="status-pill {% if workout.status == 'completed' %}status-completed{% elif workout.status == 'skipped' %}status-skipped{% else %}status-planned{% endif %}">

@@ -1,7 +1,7 @@
 {% extends "workout/base.html" %}
 {% block title %}Использовать шаблон — PulsePlan{% endblock %}
 {% block content %}
-<div class="row justify-content-center">
+<div class="template-page row justify-content-center">
     <div class="col-lg-8">
         <section class="panel">
             <div class="panel-body">
@@ -9,7 +9,7 @@
                 <p class="text-muted mt-2">Будет создана независимая копия шаблона. Сам шаблон не изменится.</p>
                 <ul class="list-group mb-4">
                     {% for ex in template_obj.exercises.all %}
-                        <li class="list-group-item d-flex justify-content-between gap-2">
+                        <li class="list-group-item template-exercise-row">
                             <span>{{ ex.name }}</span>
                             <span class="text-muted">{{ ex.sets }}×{{ ex.reps }}{% if ex.weight_kg > 0 %}, {{ ex.weight_kg }} кг{% endif %}</span>
                         </li>
@@ -18,35 +18,37 @@
                     {% endfor %}
                 </ul>
 
-                <form method="post" class="stacked-form" novalidate>
+                <form method="post" class="stacked-form template-use-form" novalidate>
                     {% csrf_token %}
                     {{ form.submission_token }}
                     {% if form.errors %}
-                        <div class="form-error-summary" role="alert" aria-live="assertive" tabindex="-1" id="form-errors">
+                        <div class="form-error-summary field-span-full" role="alert" aria-live="assertive" tabindex="-1" id="form-errors">
                             <strong>Не удалось создать тренировку:</strong>
                             <ul class="mb-0 mt-1">
                                 {% for error in form.non_field_errors %}
                                     <li>{{ error }}</li>
                                 {% endfor %}
-                                {% for field in form %}
-                                    {% if field.errors %}
-                                        {% for error in field.errors %}<li><a href="#{{ field.id_for_label }}">{{ field.label }}: {{ error }}</a></li>{% endfor %}
-                                    {% endif %}
+                                {% for field in form.hidden_fields %}
+                                    {% for error in field.errors %}<li>{{ error }}</li>{% endfor %}
+                                {% endfor %}
+                                {% for field in form.visible_fields %}
+                                    {% for error in field.errors %}<li><a href="#{{ field.id_for_label }}">{{ field.label }}: {{ error }}</a></li>{% endfor %}
                                 {% endfor %}
                             </ul>
                         </div>
                     {% endif %}
-                    <label class="field-group" for="{{ form.date.id_for_label }}">
-                        <span>Дата</span>
-                        {{ form.date }}
-                        {% for error in form.date.errors %}<span class="field-error" id="date-error">{{ error }}</span>{% endfor %}
-                    </label>
-                    <label class="field-group" for="{{ form.time.id_for_label }}">
-                        <span>Время</span>
-                        {{ form.time }}
-                        {% for error in form.time.errors %}<span class="field-error" id="time-error">{{ error }}</span>{% endfor %}
-                    </label>
-                    <div class="d-flex flex-wrap gap-2">
+                    {% for field in form.visible_fields %}
+                        <div class="field-group">
+                            {{ field.label_tag }}
+                            {{ field }}
+                            {% if field.errors %}
+                                <div class="field-error" id="{{ field.name }}-error">
+                                    {% for error in field.errors %}<div>{{ error }}</div>{% endfor %}
+                                </div>
+                            {% endif %}
+                        </div>
+                    {% endfor %}
+                    <div class="template-actions field-span-full">
                         <a href="{% url 'template_edit' template_obj.id %}" class="btn btn-outline-secondary">Отмена</a>
                         {% if template_obj.exercises.exists %}
                             <button type="submit" class="btn btn-primary-action">Создать тренировку</button>

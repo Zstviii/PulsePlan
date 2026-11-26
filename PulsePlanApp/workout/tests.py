@@ -484,13 +484,29 @@ class CalendarAndSeedTests(TestCase):
             self.assertFalse(template_form.is_valid())
             self.assertIn("date", template_form.errors)
 
-    def test_calendar_navigation_and_full_cell_target_are_rendered(self):
-        response = self.client.get(
-            reverse("dashboard"), {"date": "2026-11-25", "mode": "month"}
+    def test_calendar_day_and_events_link_to_their_targets(self):
+        day = date(2026, 11, 25)
+        workouts = [
+            Workout.objects.create(
+                user=self.user, title=title,
+                scheduled_at=timezone.make_aware(datetime.combine(day, time(hour))),
+            )
+            for title, hour in [("Приседания", 10), ("Подтягивания", 11)]
+        ]
+        dashboard = self.client.get(reverse("dashboard"), {"date": "2026-11-24", "mode": "month"})
+        self.assertContains(dashboard, "data-calendar-cell")
+        day_query = "?date=2026-11-25&amp;mode=month&amp;day=25"
+        self.assertContains(dashboard, f'href="{day_query}#selected-day"')
+        for workout in workouts:
+            self.assertContains(dashboard, f'href="{day_query}#workout-{workout.pk}"')
+
+        selected_day = self.client.get(
+            reverse("dashboard"), {"date": day.isoformat(), "mode": "month"},
         )
-        self.assertContains(response, "data-calendar-navigation")
-        self.assertContains(response, "data-calendar-cell")
-        self.assertContains(response, "role=\"link\"")
+        self.assertContains(selected_day, 'aria-current="date"', count=1)
+        self.assertContains(selected_day, 'id="selected-day" tabindex="-1"')
+        for workout in workouts:
+            self.assertContains(selected_day, f'id="workout-{workout.pk}" tabindex="-1"', count=1)
 
     def test_cannot_add_calories_for_future_date(self):
         future_date = timezone.localdate() + timedelta(days=2)

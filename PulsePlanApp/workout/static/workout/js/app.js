@@ -15,6 +15,21 @@ function announceCalendarError() {
     notice.textContent = 'Не удалось обновить календарь. Проверьте соединение и попробуйте ещё раз.';
 }
 
+function keepSelectedDayInView(dashboard, scrollLeft = 0) {
+    const calendar = dashboard?.querySelector('.calendar-scroll');
+    if (!calendar || calendar.scrollWidth <= calendar.clientWidth) return;
+
+    calendar.scrollLeft = scrollLeft;
+    const selected = calendar.querySelector('.calendar-cell.is-selected');
+    if (!selected) return;
+
+    const cellBounds = selected.getBoundingClientRect();
+    const calendarBounds = calendar.getBoundingClientRect();
+    if (cellBounds.left < calendarBounds.left || cellBounds.right > calendarBounds.right) {
+        calendar.scrollLeft += cellBounds.left - calendarBounds.left;
+    }
+}
+
 async function loadCalendar(url, pushHistory, source) {
     calendarRequest?.abort();
     const request = new AbortController();
@@ -35,9 +50,12 @@ async function loadCalendar(url, pushHistory, source) {
         const dashboard = page.getElementById(dashboardId);
         if (!dashboard) throw new Error('Calendar content is missing');
 
-        document.getElementById(dashboardId).replaceWith(dashboard);
+        const current = document.getElementById(dashboardId);
+        const scrollLeft = current.querySelector('.calendar-scroll').scrollLeft;
+        current.replaceWith(dashboard);
+        keepSelectedDayInView(dashboard, scrollLeft);
         document.title = page.title;
-        if (pushHistory) history.pushState({}, '', navigationUrl);
+        if (pushHistory && navigationUrl.href !== location.href) history.pushState({}, '', navigationUrl);
         const heading = document.getElementById('selected-day');
         calendarStatus.textContent = heading.textContent.trim();
 
@@ -48,8 +66,7 @@ async function loadCalendar(url, pushHistory, source) {
         } else if (source) {
             const controls = [...dashboard.querySelectorAll('.calendar-controls a')];
             const equivalent = controls.find(control => (
-                control.className === source.className
-                && control.getAttribute('aria-label') === source.getAttribute('aria-label')
+                control.getAttribute('aria-label') === source.getAttribute('aria-label')
                 && control.textContent.trim() === source.textContent.trim()
             ));
             (equivalent || dashboard.querySelector('[aria-current="date"]'))?.focus({preventScroll: true});
@@ -85,8 +102,10 @@ confirmButton.addEventListener('click', () => {
     if (!pendingDeletion) return;
     const {form, submitter} = pendingDeletion;
     pendingDeletion = null;
-    confirmedForm = form;
     deleteModal.hide();
+    if (!form.isConnected) return;
+
+    confirmedForm = form;
     form.requestSubmit(submitter || undefined);
     confirmedForm = null;
 });
@@ -136,7 +155,7 @@ function showDownloadError(form, message) {
 async function downloadExport(form, data) {
     try {
         const response = await fetch(form.action, {method: 'POST', body: data});
-        if (response.redirected) {
+        if (response.redirected && new URL(response.url).pathname !== location.pathname) {
             location.assign(response.url);
             return;
         }
@@ -198,3 +217,4 @@ window.addEventListener('pageshow', () => {
 const formErrors = document.getElementById('form-errors');
 if (formErrors && !document.querySelector('[autofocus]')) formErrors.focus();
 document.querySelector('.entry-form-panel [aria-invalid="true"]')?.focus();
+keepSelectedDayInView(document.getElementById(dashboardId));
