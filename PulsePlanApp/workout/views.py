@@ -1146,11 +1146,11 @@ def export_data_view(request):
             date_to = date.fromisoformat(date_to) if date_to else None
         except ValueError:
             messages.error(request, "Некорректный диапазон дат.")
-            return settings_view(request)
+            return redirect("settings")
 
         if date_from and date_to and date_from > date_to:
             messages.error(request, "Дата начала не может быть позже даты окончания.")
-            return settings_view(request)
+            return redirect("settings")
 
         rows = []
         if include_workouts:
@@ -1257,7 +1257,7 @@ def export_data_view(request):
 
         if not rows:
             messages.error(request, "За выбранный период нет данных для экспорта.")
-            return settings_view(request)
+            return redirect("settings")
 
         filename = f"pulseplan_export_{timezone.localdate().isoformat()}"
         if export_format == "json":
@@ -1295,4 +1295,4 @@ def export_data_view(request):
         )
         return response
 
-    return settings_view(request)
+    return redirect("settings")

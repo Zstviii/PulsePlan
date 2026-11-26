@@ -1693,7 +1693,7 @@ class IntegrationAndFeaturesTests(TestCase):
         )
 
         page_resp = self.client.get(reverse("export_data"))
-        self.assertEqual(page_resp.status_code, 200)
+        self.assertRedirects(page_resp, reverse("settings"))
 
         export_resp = self.client.post(
             reverse("export_data"),
@@ -1703,6 +1703,14 @@ class IntegrationAndFeaturesTests(TestCase):
         body = export_resp.content.decode("utf-8", errors="replace")
         self.assertIn("Моя экспортная тренировка", body)
         self.assertNotIn("Чужая секретная тренировка", body)
+
+    def test_invalid_export_returns_to_canonical_settings_page(self):
+        response = self.client.post(
+            reverse("export_data"),
+            data={"date_from": "not-a-date", "workouts": "on"},
+        )
+
+        self.assertRedirects(response, reverse("settings"))
 
     def test_full_export_includes_all_user_data_only(self):
         workout = Workout.objects.create(
@@ -1809,12 +1817,14 @@ class IntegrationAndFeaturesTests(TestCase):
 
     def test_account_data_page_is_available_and_requires_login(self):
         response = self.client.get(reverse("account_data"))
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Безопасное удаление данных")
-        self.assertContains(response, reverse("export_user_data"))
+        self.assertRedirects(response, reverse("settings"))
+
+        settings_response = self.client.get(reverse("settings"))
+        self.assertContains(settings_response, "Безопасное удаление данных")
+        self.assertContains(settings_response, reverse("export_user_data"))
 
         self.client.logout()
-        response = self.client.get(reverse("account_data"))
+        response = self.client.get(reverse("settings"))
         self.assertEqual(response.status_code, 302)
         self.assertIn(reverse("login"), response.url)
 

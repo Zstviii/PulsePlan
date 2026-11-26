@@ -1,5 +1,6 @@
 from django.contrib.auth import views as auth_views
 from django.urls import path
+from django.views.generic import RedirectView
 from . import views
 
 urlpatterns = [
@@ -64,7 +65,11 @@ urlpatterns = [
     path("exercise/<int:exercise_id>/history/add/", views.exercise_result_add_view, name="exercise_result_add"),
     path("settings/", views.settings_view, name="settings"),
     path("settings/recovery-email/", views.recovery_email_view, name="recovery_email"),
-    path("account/data/", views.settings_view, name="account_data"),
+    path(
+        "account/data/",
+        RedirectView.as_view(pattern_name="settings", permanent=False, query_string=True),
+        name="account_data",
+    ),
     path("account/export/", views.export_user_data_view, name="export_user_data"),
     path("account/delete-data/", views.delete_user_data_view, name="delete_user_data"),
     path("export/", views.export_data_view, name="export_data"),
