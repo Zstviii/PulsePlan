@@ -88,6 +88,74 @@ python manage.py runserver
 
 По умолчанию используется база данных SQLite, расположенная по пути `PulsePlanApp/db.sqlite3`.
 
+## Production HTTPS за Nginx
+
+Ниже приведён порядок развёртывания для `pulseplan.treidendev.ru`. Приложение использует SQLite, поэтому серверный пользователь Gunicorn должен иметь право записи в `PulsePlanApp/db.sqlite3` и каталог с базой. Файл `.env` и база данных не должны попадать в Git или быть доступны напрямую через Nginx.
+
+### Подготовка чистой копии
+
+На Linux-сервере войдите под отдельным непривилегированным пользователем приложения и получите чистую копию проекта:
+
+```sh
+git clone https://github.com/Zstviii/PulsePlan.git PulsePlan
+cd PulsePlan/PulsePlanApp
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+cp .env.example .env
+chmod 600 .env
+```
+
+Сгенерируйте секретный ключ и внесите его в `.env` локальным редактором. Не передавайте ключ в командной строке сервера и не публикуйте его:
+
+```sh
+python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+```
+
+Для production укажите в `.env`:
+
+```dotenv
+DJANGO_SECRET_KEY=<сгенерированный-секретный-ключ>
+DJANGO_DEBUG=False
+DJANGO_ALLOWED_HOSTS=pulseplan.treidendev.ru
+DJANGO_CSRF_TRUSTED_ORIGINS=https://pulseplan.treidendev.ru
+```
+
+При `DJANGO_DEBUG=False` Django доверяет `X-Forwarded-Proto: https`, перенаправляет HTTP на HTTPS и выставляет secure-флаги для session и CSRF cookies. Не включайте этот proxy-заголовок, если приложение доступно клиентам в обход настроенного Nginx. Не используйте `runserver` для production.
+
+### Проверки и запуск Django
+
+Из каталога `PulsePlanApp/` с активированным виртуальным окружением выполните:
+
+```sh
+python manage.py check --deploy
+python manage.py migrate --noinput
+python manage.py collectstatic --noinput
+gunicorn --bind 127.0.0.1:8000 config.wsgi:application
+```
+
+`check --deploy` выводит предупреждения о незаданных production-параметрах, которые нужно оценить перед публикацией. Предупреждение `security.W004` ожидаемо: HSTS здесь намеренно не включён, пока отдельно не подтверждено постоянное HTTPS-обслуживание домена и нужных поддоменов. Gunicorn здесь запускается на loopback-интерфейсе только для проверки; для постоянного запуска администратор должен согласовать и настроить systemd unit и права пользователя сервиса.
+
+### Что согласовать с администратором Nginx
+
+- DNS `pulseplan.treidendev.ru` должен вести на сервер; сертификат TLS должен быть установлен и проверен.
+- Nginx завершает HTTPS, перенаправляет HTTP на HTTPS и проксирует приложение на `127.0.0.1:8000`.
+- Для upstream Nginx должен передавать исходный `Host`, `X-Forwarded-For` и выставлять `X-Forwarded-Proto $scheme`. Входящий от клиента `X-Forwarded-Proto` нужно перезаписывать, а не принимать как доверенный.
+- Порт Gunicorn не должен быть открыт извне. Nginx должен отдавать собранную статику из `PulsePlanApp/staticfiles/` по URL-префиксу `/static/`.
+- Конфигурации Nginx и systemd, пользователь процесса, права на SQLite и резервное копирование согласуются с администратором сервера; этот репозиторий не управляет ими.
+
+### Проверка опубликованного сайта
+
+После настройки Nginx/systemd проверьте с клиентской машины:
+
+```sh
+curl -I http://pulseplan.treidendev.ru/
+curl -I https://pulseplan.treidendev.ru/
+curl -I https://pulseplan.treidendev.ru/login/
+```
+
+Первый запрос должен перенаправлять на HTTPS; запрос к корню сайта без авторизации ожидаемо перенаправляется на страницу входа. Запрос `/login/` должен вернуть `200 OK`. В браузере проверьте вход тестовой учётной записью, защищённое действие с формой и отсутствие mixed content. Ошибка CSRF обычно означает, что Nginx передаёт неверный `Host`/`X-Forwarded-Proto` либо `DJANGO_CSRF_TRUSTED_ORIGINS` не соответствует HTTPS-origin. Не вводите реальные пароли в тестовые команды и не используйте production-учётную запись для проверки.
+
 ## Тестирование
 
 Для запуска тестов приложения тренировок выполните команду из директории `PulsePlanApp/`:
