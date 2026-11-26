@@ -1,5 +1,7 @@
+import re
 import os
 import uuid
+
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, time, timedelta
 from unittest.mock import patch
@@ -162,7 +164,7 @@ class WorkoutOwnershipTests(TestCase):
             {"title": "   ", "date": "not-a-date", "time": "10:00"},
         )
 
-        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.status_code, 200)
         self.alice_workout.refresh_from_db()
         self.assertEqual(self.alice_workout.title, "Тренировка Алисы")
 
@@ -496,7 +498,7 @@ class CalendarAndSeedTests(TestCase):
             reverse("calorie_create"),
             {"date": future_date.isoformat(), "calories_burned": 250},
         )
-        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.status_code, 200)
         self.assertEqual(DailyCalories.objects.filter(user=self.user).count(), 0)
 
     def test_week_period_bounds_and_empty_week_flag(self):
@@ -803,180 +805,180 @@ class ExtendedFormTests(TestCase):
             self.assertFalse(over_limit_form.is_valid())
             self.assertIn("calories_burned", over_limit_form.errors)
 
-    class WorkoutStatusTransitionTests(TestCase):
+class WorkoutStatusTransitionTests(TestCase):
 
-        def setUp(self):
-            self.user = User.objects.create_user(
-                username="status_user", password="Password123!"
-            )
-            self.client.force_login(self.user)
-            self.workout = Workout.objects.create(
-                user=self.user,
-                title="Тест статусов",
-                status=Workout.Status.PLANNED,
-            )
-            self.url = reverse("workout_toggle_status", args=[self.workout.id])
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="status_user", password="Password123!"
+        )
+        self.client.force_login(self.user)
+        self.workout = Workout.objects.create(
+            user=self.user,
+            title="Тест статусов",
+            status=Workout.Status.PLANNED,
+        )
+        self.url = reverse("workout_toggle_status", args=[self.workout.id])
 
-        def test_all_allowed_transitions_via_view(self):
-            self.client.post(self.url, {"status": Workout.Status.COMPLETED})
-            self.workout.refresh_from_db()
-            self.assertEqual(self.workout.status, Workout.Status.COMPLETED)
+    def test_all_allowed_transitions_via_view(self):
+        self.client.post(self.url, {"status": Workout.Status.COMPLETED})
+        self.workout.refresh_from_db()
+        self.assertEqual(self.workout.status, Workout.Status.COMPLETED)
 
-            self.client.post(self.url, {"status": Workout.Status.SKIPPED})
-            self.workout.refresh_from_db()
-            self.assertEqual(self.workout.status, Workout.Status.SKIPPED)
+        self.client.post(self.url, {"status": Workout.Status.SKIPPED})
+        self.workout.refresh_from_db()
+        self.assertEqual(self.workout.status, Workout.Status.SKIPPED)
 
-            self.client.post(self.url, {"status": Workout.Status.PLANNED})
-            self.workout.refresh_from_db()
-            self.assertEqual(self.workout.status, Workout.Status.PLANNED)
+        self.client.post(self.url, {"status": Workout.Status.PLANNED})
+        self.workout.refresh_from_db()
+        self.assertEqual(self.workout.status, Workout.Status.PLANNED)
 
-            self.client.post(self.url, {"status": Workout.Status.SKIPPED})
-            self.workout.refresh_from_db()
-            self.assertEqual(self.workout.status, Workout.Status.SKIPPED)
+        self.client.post(self.url, {"status": Workout.Status.SKIPPED})
+        self.workout.refresh_from_db()
+        self.assertEqual(self.workout.status, Workout.Status.SKIPPED)
 
-        def test_forbidden_transition_skipped_to_completed_blocked(self):
-            self.workout.status = Workout.Status.SKIPPED
-            self.workout.save(update_fields=["status"])
+    def test_forbidden_transition_skipped_to_completed_blocked(self):
+        self.workout.status = Workout.Status.SKIPPED
+        self.workout.save(update_fields=["status"])
 
-            response = self.client.post(self.url, {"status": Workout.Status.COMPLETED})
-            self.assertEqual(response.status_code, 302)
-            self.workout.refresh_from_db()
-            self.assertEqual(self.workout.status, Workout.Status.SKIPPED)
+        response = self.client.post(self.url, {"status": Workout.Status.COMPLETED})
+        self.assertEqual(response.status_code, 302)
+        self.workout.refresh_from_db()
+        self.assertEqual(self.workout.status, Workout.Status.SKIPPED)
 
-        def test_invalid_status_value_is_rejected(self):
-            response = self.client.post(self.url, {"status": "unknown_status"})
-            self.assertEqual(response.status_code, 302)
-            self.workout.refresh_from_db()
-            self.assertEqual(self.workout.status, Workout.Status.PLANNED)
+    def test_invalid_status_value_is_rejected(self):
+        response = self.client.post(self.url, {"status": "unknown_status"})
+        self.assertEqual(response.status_code, 302)
+        self.workout.refresh_from_db()
+        self.assertEqual(self.workout.status, Workout.Status.PLANNED)
 
-    class ForeignDataAccessTests(TestCase):
+class ForeignDataAccessTests(TestCase):
 
-        def setUp(self):
-            self.owner = User.objects.create_user(
-                username="owner", password="Password123!"
-            )
-            self.intruder = User.objects.create_user(
-                username="intruder", password="Password123!"
-            )
-            self.today = timezone.localdate()
+    def setUp(self):
+        self.owner = User.objects.create_user(
+            username="owner", password="Password123!"
+        )
+        self.intruder = User.objects.create_user(
+            username="intruder", password="Password123!"
+        )
+        self.today = timezone.localdate()
 
-            self.owner_workout = Workout.objects.create(
-                user=self.owner,
-                title="Секретная тренировка",
-                status=Workout.Status.COMPLETED,
-            )
-            self.owner_calorie = DailyCalories.objects.create(
-                user=self.owner,
-                workout=self.owner_workout,
-                calories_burned=550,
-            )
+        self.owner_workout = Workout.objects.create(
+            user=self.owner,
+            title="Секретная тренировка",
+            status=Workout.Status.COMPLETED,
+        )
+        self.owner_calorie = DailyCalories.objects.create(
+            user=self.owner,
+            workout=self.owner_workout,
+            calories_burned=550,
+        )
 
-        def test_intruder_cannot_see_owner_workouts_or_calories_on_dashboard(self):
-            self.client.force_login(self.intruder)
-            response = self.client.get(
-                reverse("dashboard"), {"date": self.today.isoformat()}
-            )
+    def test_intruder_cannot_see_owner_workouts_or_calories_on_dashboard(self):
+        self.client.force_login(self.intruder)
+        response = self.client.get(
+            reverse("dashboard"), {"date": self.today.isoformat()}
+        )
 
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(list(response.context["selected_day_workouts"]), [])
-            self.assertEqual(list(response.context["selected_day_calorie_logs"]), [])
-            self.assertEqual(response.context["selected_day_total_calories"], 0)
-            self.assertEqual(response.context["total_completed_workouts"], 0)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(list(response.context["selected_day_workouts"]), [])
+        self.assertEqual(list(response.context["selected_day_calorie_logs"]), [])
+        self.assertEqual(response.context["selected_day_total_calories"], 0)
+        self.assertEqual(response.context["total_completed_workouts"], 0)
 
-        def test_intruder_cannot_delete_owner_calorie_entry(self):
-            self.client.force_login(self.intruder)
-            response = self.client.post(
-                reverse("calorie_delete", args=[self.owner_calorie.id])
-            )
-            self.assertEqual(response.status_code, 404)
-            self.assertTrue(
-                DailyCalories.objects.filter(pk=self.owner_calorie.pk).exists()
-            )
+    def test_intruder_cannot_delete_owner_calorie_entry(self):
+        self.client.force_login(self.intruder)
+        response = self.client.post(
+            reverse("calorie_delete", args=[self.owner_calorie.id])
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertTrue(
+            DailyCalories.objects.filter(pk=self.owner_calorie.pk).exists()
+        )
 
-        def test_intruder_cannot_link_calories_to_completed_foreign_workout(self):
-            self.client.force_login(self.intruder)
-            response = self.client.post(
-                reverse("calorie_create"),
-                {"calories_burned": 200, "workout_id": self.owner_workout.id},
-            )
-            self.assertEqual(response.status_code, 404)
-            self.assertEqual(
-                DailyCalories.objects.filter(user=self.intruder).count(), 0
-            )
+    def test_intruder_cannot_link_calories_to_completed_foreign_workout(self):
+        self.client.force_login(self.intruder)
+        response = self.client.post(
+            reverse("calorie_create"),
+            {"calories_burned": 200, "workout_id": self.owner_workout.id},
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(
+            DailyCalories.objects.filter(user=self.intruder).count(), 0
+        )
 
-            foreign_entry = DailyCalories(
-                user=self.intruder,
-                workout=self.owner_workout,
-                calories_burned=200,
-            )
-            with self.assertRaises(ValidationError):
-                foreign_entry.full_clean()
+        foreign_entry = DailyCalories(
+            user=self.intruder,
+            workout=self.owner_workout,
+            calories_burned=200,
+        )
+        with self.assertRaises(ValidationError):
+            foreign_entry.full_clean()
 
-    class StatisticsPeriodBoundaryTests(TestCase):
-        def setUp(self):
-            self.user = User.objects.create_user(
-                username="stats_user", password="Password123!"
-            )
-            self.client.force_login(self.user)
-            self.tz = timezone.get_current_timezone()
+class StatisticsPeriodBoundaryTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="stats_user", password="Password123!"
+        )
+        self.client.force_login(self.user)
+        self.tz = timezone.get_current_timezone()
 
-        def _create_completed_workout_with_calories(
-            self, target_date: date, hour: int, kcal: int
-        ):
-            w = Workout.objects.create(
-                user=self.user,
-                title=f"Тренировка {target_date}",
-                scheduled_at=timezone.make_aware(
-                    datetime.combine(target_date, time(hour, 0)), self.tz
-                ),
-                status=Workout.Status.COMPLETED,
-            )
-            DailyCalories.objects.create(
-                user=self.user, workout=w, calories_burned=kcal
-            )
-            return w
+    def _create_completed_workout_with_calories(
+        self, target_date: date, hour: int, kcal: int
+    ):
+        w = Workout.objects.create(
+            user=self.user,
+            title=f"Тренировка {target_date}",
+            scheduled_at=timezone.make_aware(
+                datetime.combine(target_date, time(hour, 0)), self.tz
+            ),
+            status=Workout.Status.COMPLETED,
+        )
+        DailyCalories.objects.create(
+            user=self.user, workout=w, calories_burned=kcal
+        )
+        return w
 
-        def test_week_statistics_include_exact_bounds_and_exclude_adjacent_days(self):
-            selected = date(2026, 11, 18)
-            prev_sunday = date(2026, 11, 15)
-            monday_start = date(2026, 11, 16)
-            sunday_end = date(2026, 11, 22)
-            next_monday = date(2026, 11, 23)
+    def test_week_statistics_include_exact_bounds_and_exclude_adjacent_days(self):
+        selected = date(2026, 11, 18)
+        prev_sunday = date(2026, 11, 15)
+        monday_start = date(2026, 11, 16)
+        sunday_end = date(2026, 11, 22)
+        next_monday = date(2026, 11, 23)
 
-            self._create_completed_workout_with_calories(prev_sunday, 23, 100)
-            self._create_completed_workout_with_calories(monday_start, 0, 200)
-            self._create_completed_workout_with_calories(sunday_end, 23, 350)
-            self._create_completed_workout_with_calories(next_monday, 0, 400)
+        self._create_completed_workout_with_calories(prev_sunday, 23, 100)
+        self._create_completed_workout_with_calories(monday_start, 0, 200)
+        self._create_completed_workout_with_calories(sunday_end, 23, 350)
+        self._create_completed_workout_with_calories(next_monday, 0, 400)
 
-            response = self.client.get(
-                reverse("dashboard"), {"date": selected.isoformat(), "mode": "week"}
-            )
+        response = self.client.get(
+            reverse("dashboard"), {"date": selected.isoformat(), "mode": "week"}
+        )
 
-            self.assertEqual(response.context["week_period_start"], monday_start)
-            self.assertEqual(response.context["week_period_end"], sunday_end)
-            self.assertEqual(response.context["week_workouts_count"], 2)
-            self.assertEqual(response.context["week_total_calories"], 550)
-            self.assertEqual(response.context["total_completed_workouts"], 4)
-            self.assertFalse(response.context["is_empty_week"])
+        self.assertEqual(response.context["week_period_start"], monday_start)
+        self.assertEqual(response.context["week_period_end"], sunday_end)
+        self.assertEqual(response.context["week_workouts_count"], 2)
+        self.assertEqual(response.context["week_total_calories"], 550)
+        self.assertEqual(response.context["total_completed_workouts"], 4)
+        self.assertFalse(response.context["is_empty_week"])
 
-        def test_month_mode_calendar_grid_boundaries(self):
-            selected = date(2026, 11, 10)
-            grid_first_day = date(2026, 10, 26)
-            in_month_day = date(2026, 11, 10)
+    def test_month_mode_calendar_grid_boundaries(self):
+        selected = date(2026, 11, 10)
+        grid_first_day = date(2026, 10, 26)
+        in_month_day = date(2026, 11, 10)
 
-            self._create_completed_workout_with_calories(grid_first_day, 12, 150)
-            self._create_completed_workout_with_calories(in_month_day, 12, 300)
+        self._create_completed_workout_with_calories(grid_first_day, 12, 150)
+        self._create_completed_workout_with_calories(in_month_day, 12, 300)
 
-            response = self.client.get(
-                reverse("dashboard"), {"date": selected.isoformat(), "mode": "month"}
-            )
+        response = self.client.get(
+            reverse("dashboard"), {"date": selected.isoformat(), "mode": "month"}
+        )
 
-            calendar_weeks = response.context["calendar_weeks"]
-            first_cell = calendar_weeks[0][0]
-            self.assertEqual(first_cell["date"], grid_first_day)
-            self.assertFalse(first_cell["in_current_month"])
-            self.assertEqual(first_cell["total_calories"], 150)
-            self.assertEqual(response.context["selected_day_total_calories"], 300)
+        calendar_weeks = response.context["calendar_weeks"]
+        first_cell = calendar_weeks[0][0]
+        self.assertEqual(first_cell["date"], grid_first_day)
+        self.assertFalse(first_cell["in_current_month"])
+        self.assertEqual(first_cell["total_calories"], 150)
+        self.assertEqual(response.context["selected_day_total_calories"], 300)
 
 
 class CalendarTransitionsAndLabelsTests(TestCase):
@@ -1061,7 +1063,7 @@ class CalendarTransitionsAndLabelsTests(TestCase):
             reverse("calorie_create"),
             {"date": future_date.isoformat(), "calories_burned": 300},
         )
-        self.assertEqual(post_resp.status_code, 302)
+        self.assertEqual(post_resp.status_code, 200)
         self.assertEqual(DailyCalories.objects.filter(user=self.user).count(), 0)
 
 
@@ -1993,3 +1995,125 @@ class IntegrationAndFeaturesTests(TestCase):
         self.assertFalse(DailyCalories.objects.filter(user_id=user_id).exists())
         self.assertFalse(WorkoutTemplate.objects.filter(user_id=user_id).exists())
         self.assertFalse(TemplateExercise.objects.filter(template__user_id=user_id).exists())
+
+class RegressionRoutesCsrfAndTemplatesTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="regression_user", password="Password123!"
+        )
+        self.client.force_login(self.user)
+        self.workout = Workout.objects.create(
+            user=self.user,
+            title="Базовая тренировка",
+            status=Workout.Status.PLANNED,
+        )
+
+    def test_csrf_checks_enforced_on_user_routes(self):
+        csrf_client = Client(enforce_csrf_checks=True)
+        csrf_client.force_login(self.user)
+
+        # Запросы без CSRF-токена должны отклоняться с кодом 403
+        blocked_endpoints = [
+            (reverse("workout_create"), {"title": "Без токена"}),
+            (reverse("workout_toggle_status", args=[self.workout.id]), {}),
+            (reverse("workout_delete", args=[self.workout.id]), {}),
+            (reverse("calorie_create"), {"calories_burned": 200}),
+            (reverse("template_create"), {"name": "Без токена"}),
+            (reverse("logout"), {}),
+        ]
+        for url, payload in blocked_endpoints:
+            with self.subTest(url=url):
+                self.assertEqual(csrf_client.post(url, payload).status_code, 403)
+
+        # Запрос с валидным CSRF-токеном проходит успешно
+        dashboard_resp = csrf_client.get(reverse("dashboard"))
+        token = re.search(
+            r'name="csrfmiddlewaretoken" value="([^"]+)"',
+            dashboard_resp.content.decode("utf-8"),
+        ).group(1)
+
+        ok_resp = csrf_client.post(
+            reverse("workout_create"),
+            {
+                "csrfmiddlewaretoken": token,
+                "title": "Тренировка с CSRF",
+                "date": timezone.localdate().isoformat(),
+                "time": "17:00",
+            },
+        )
+        self.assertEqual(ok_resp.status_code, 302)
+        self.assertTrue(
+            Workout.objects.filter(user=self.user, title="Тренировка с CSRF").exists()
+        )
+
+    def test_templates_used_across_user_routes(self):
+        pages = [
+            (reverse("dashboard"), "workout/dashboard.html"),
+            (reverse("template_list"), "workout/template_list.html"),
+            (reverse("template_create"), "workout/template_form.html"),
+            (reverse("settings"), "workout/account_data.html"),
+        ]
+        for url, expected_template in pages:
+            with self.subTest(url=url):
+                response = self.client.get(url)
+                self.assertEqual(response.status_code, 200)
+                self.assertTemplateUsed(response, expected_template)
+
+        for url in [reverse("export_data"), reverse("account_data")]:
+            with self.subTest(url=url):
+                response = self.client.get(url)
+                self.assertRedirects(response, reverse("settings"))
+
+        self.client.logout()
+        for url, expected_template in [
+            (reverse("login"), "workout/login.html"),
+            (reverse("register"), "workout/register.html"),
+        ]:
+            with self.subTest(url=url):
+                response = self.client.get(url)
+                self.assertEqual(response.status_code, 200)
+                self.assertTemplateUsed(response, expected_template)
+
+    def test_form_errors_rendered_in_templates_on_invalid_submit(self):
+        bad_workout = self.client.post(
+            reverse("workout_create"),
+            {"title": "   ", "date": "2026-11-20", "time": "10:00"},
+            follow=True,
+        )
+        self.assertTemplateUsed(bad_workout, "workout/entry_form.html")
+        self.assertContains(bad_workout, "Укажите название тренировки.")
+
+        bad_calories = self.client.post(
+            reverse("calorie_create"),
+            {"date": "2026-11-20", "calories_burned": 25000},
+            follow=True,
+        )
+        self.assertTemplateUsed(bad_calories, "workout/entry_form.html")
+        self.assertContains(bad_calories, "Значение не может превышать 20 000 ккал.")
+
+    def test_repeated_posts_and_deletions_via_user_routes(self):
+        del_workout_url = reverse("workout_delete", args=[self.workout.id])
+        self.assertEqual(self.client.post(del_workout_url).status_code, 302)
+        self.assertFalse(Workout.objects.filter(pk=self.workout.pk).exists())
+        self.assertEqual(self.client.post(del_workout_url).status_code, 404)
+
+        today_str = timezone.localdate().isoformat()
+        self.client.post(
+            reverse("calorie_create"),
+            {"date": today_str, "calories_burned": 180, "activity_note": "Прогулка"},
+        )
+        entry = DailyCalories.objects.get(user=self.user, calories_burned=180)
+        del_cal_url = reverse("calorie_delete", args=[entry.id])
+        self.assertEqual(self.client.post(del_cal_url).status_code, 302)
+        self.assertFalse(DailyCalories.objects.filter(pk=entry.pk).exists())
+        self.assertEqual(self.client.post(del_cal_url).status_code, 404)
+
+        w = Workout.objects.create(
+            user=self.user, title="Повторный статус", status=Workout.Status.PLANNED
+        )
+        toggle_url = reverse("workout_toggle_status", args=[w.id])
+        self.client.post(toggle_url, {"status": Workout.Status.COMPLETED})
+        self.client.post(toggle_url, {"status": Workout.Status.COMPLETED})
+        w.refresh_from_db()
+        self.assertEqual(w.status, Workout.Status.COMPLETED)
+
