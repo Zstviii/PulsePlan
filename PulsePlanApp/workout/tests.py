@@ -2041,14 +2041,18 @@ class RegressionRoutesCsrfAndTemplatesTests(TestCase):
             (reverse("dashboard"), "workout/dashboard.html"),
             (reverse("template_list"), "workout/template_list.html"),
             (reverse("template_create"), "workout/template_form.html"),
-            (reverse("export_data"), "workout/export.html"),
-            (reverse("account_data"), "workout/account_data.html"),
+            (reverse("settings"), "workout/account_data.html"),
         ]
         for url, expected_template in pages:
             with self.subTest(url=url):
                 response = self.client.get(url)
                 self.assertEqual(response.status_code, 200)
                 self.assertTemplateUsed(response, expected_template)
+
+        for url in [reverse("export_data"), reverse("account_data")]:
+            with self.subTest(url=url):
+                response = self.client.get(url)
+                self.assertRedirects(response, reverse("settings"))
 
         self.client.logout()
         for url, expected_template in [
